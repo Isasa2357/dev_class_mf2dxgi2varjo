@@ -105,13 +105,13 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)third_party\onnx_runtime\include\onnxruntime\core\providers\dml;$(ProjectDir)third_party\onnx_runtime\include\onnxruntime\core\session;$(ProjectDir)third_party\onnx_runtime\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)third_party\onnxruntime\include\onnxruntime\core\providers\dml;$(ProjectDir)third_party\onnxruntime\include\onnxruntime\core\session;$(ProjectDir)third_party\onnxruntime\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)third_party\onnx_runtime\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>absl_base.lib;absl_city.lib;absl_civil_time.lib;absl_cord.lib;absl_cordz_functions.lib;absl_cordz_handle.lib;absl_cordz_info.lib;absl_cord_internal.lib;absl_crc32c.lib;absl_crc_cord_state.lib;absl_crc_cpu_detect.lib;absl_crc_internal.lib;absl_debugging_internal.lib;absl_decode_rust_punycode.lib;absl_demangle_internal.lib;absl_demangle_rust.lib;absl_examine_stack.lib;absl_exponential_biased.lib;absl_failure_signal_handler.lib;absl_flags_commandlineflag.lib;absl_flags_commandlineflag_internal.lib;absl_flags_config.lib;absl_flags_internal.lib;absl_flags_marshalling.lib;absl_flags_parse.lib;absl_flags_private_handle_accessor.lib;absl_flags_program_name.lib;absl_flags_reflection.lib;absl_flags_usage.lib;absl_flags_usage_internal.lib;absl_graphcycles_internal.lib;absl_hash.lib;absl_hashtablez_sampler.lib;absl_int128.lib;absl_kernel_timeout_internal.lib;absl_leak_check.lib;absl_log_entry.lib;absl_log_globals.lib;absl_log_internal_check_op.lib;absl_log_internal_conditions.lib;absl_log_internal_fnmatch.lib;absl_log_internal_format.lib;absl_log_internal_globals.lib;absl_log_internal_log_sink_set.lib;absl_log_internal_message.lib;absl_log_internal_nullguard.lib;absl_log_internal_proto.lib;absl_log_internal_structured_proto.lib;absl_log_severity.lib;absl_log_sink.lib;absl_malloc_internal.lib;absl_raw_hash_set.lib;absl_raw_logging_internal.lib;absl_spinlock_wait.lib;absl_stacktrace.lib;absl_strerror.lib;absl_strings.lib;absl_strings_internal.lib;absl_string_view.lib;absl_str_format_internal.lib;absl_symbolize.lib;absl_synchronization.lib;absl_throw_delegate.lib;absl_time.lib;absl_time_zone.lib;absl_tracing_internal.lib;absl_utf8_for_code_point.lib;absl_vlog_config_internal.lib;cppwinrt_fast_forwarder.lib;cpuinfo.lib;custom_op_get_const_input_test_library.lib;custom_op_invalid_library.lib;custom_op_library.lib;custom_op_local_function.lib;DirectML.lib;example_plugin_ep.lib;example_plugin_ep_kernel_registry.lib;example_plugin_ep_virt_gpu.lib;flatbuffers.lib;gmock.lib;gtest.lib;libprotobuf-lite.lib;libprotobuf.lib;libprotoc.lib;onnx.lib;onnxruntime.lib;onnxruntime_common.lib;onnxruntime_flatbuffers.lib;onnxruntime_framework.lib;onnxruntime_graph.lib;onnxruntime_lora.lib;onnxruntime_mlas.lib;onnxruntime_mocked_allocator.lib;onnxruntime_optimizer.lib;onnxruntime_providers.lib;onnxruntime_providers_dml.lib;onnxruntime_providers_shared.lib;onnxruntime_runtime_path_test_shared_library.lib;onnxruntime_session.lib;onnxruntime_test_utils.lib;onnxruntime_unittest_utils.lib;onnxruntime_util.lib;onnx_proto.lib;onnx_test_data_proto.lib;onnx_test_runner_common.lib;re2.lib;win_getopt_wide.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)third_party\onnxruntime\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>onnxruntime.lib;onnxruntime_providers_dml.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -123,13 +123,13 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)third_party\onnx_runtime\include\onnxruntime\core\providers\dml;$(ProjectDir)third_party\onnx_runtime\include\onnxruntime\core\session;$(ProjectDir)third_party\onnx_runtime\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)third_party\onnxruntime\include\onnxruntime\core\providers\dml;$(ProjectDir)third_party\onnxruntime\include\onnxruntime\core\session;$(ProjectDir)third_party\onnxruntime\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>$(ProjectDir)third_party\onnx_runtime\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>absl_base.lib;absl_city.lib;absl_civil_time.lib;absl_cord.lib;absl_cordz_functions.lib;absl_cordz_handle.lib;absl_cordz_info.lib;absl_cord_internal.lib;absl_crc32c.lib;absl_crc_cord_state.lib;absl_crc_cpu_detect.lib;absl_crc_internal.lib;absl_debugging_internal.lib;absl_decode_rust_punycode.lib;absl_demangle_internal.lib;absl_demangle_rust.lib;absl_examine_stack.lib;absl_exponential_biased.lib;absl_flags_commandlineflag.lib;absl_flags_commandlineflag_internal.lib;absl_flags_config.lib;absl_flags_internal.lib;absl_flags_marshalling.lib;absl_flags_private_handle_accessor.lib;absl_flags_program_name.lib;absl_flags_reflection.lib;absl_graphcycles_internal.lib;absl_hash.lib;absl_hashtablez_sampler.lib;absl_int128.lib;absl_kernel_timeout_internal.lib;absl_leak_check.lib;absl_log_entry.lib;absl_log_globals.lib;absl_log_internal_check_op.lib;absl_log_internal_conditions.lib;absl_log_internal_fnmatch.lib;absl_log_internal_format.lib;absl_log_internal_globals.lib;absl_log_internal_log_sink_set.lib;absl_log_internal_message.lib;absl_log_internal_nullguard.lib;absl_log_internal_proto.lib;absl_log_internal_structured_proto.lib;absl_log_severity.lib;absl_log_sink.lib;absl_malloc_internal.lib;absl_raw_hash_set.lib;absl_raw_logging_internal.lib;absl_spinlock_wait.lib;absl_stacktrace.lib;absl_strerror.lib;absl_strings.lib;absl_strings_internal.lib;absl_string_view.lib;absl_str_format_internal.lib;absl_symbolize.lib;absl_synchronization.lib;absl_throw_delegate.lib;absl_time.lib;absl_time_zone.lib;absl_tracing_internal.lib;absl_utf8_for_code_point.lib;absl_vlog_config_internal.lib;cppwinrt_fast_forwarder.lib;cpuinfo.lib;custom_op_get_const_input_test_library.lib;custom_op_invalid_library.lib;custom_op_local_function.lib;DirectML.lib;libprotobuf-lite.lib;libprotobuf.lib;libprotoc.lib;onnx.lib;onnxruntime.lib;onnxruntime_common.lib;onnxruntime_mlas.lib;onnxruntime_optimizer.lib;onnxruntime_providers.lib;onnxruntime_util.lib;onnx_proto.lib;re2.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)third_party\onnxruntime\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>onnxruntime.lib;onnxruntime_providers_dml.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -144,6 +144,7 @@
     <ClCompile Include="SharedNv12FrameBridge11To12.cpp" />
     <ClCompile Include="TensorDebugSaverD3D12.cpp" />
     <ClCompile Include="TensorReadbackD3D12.cpp" />
+    <ClCompile Include="YoloSegPostProcessorD3D12.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="D3D11Core.hpp" />
@@ -160,6 +161,7 @@
     <ClInclude Include="TensorDebugSaverD3D12.hpp" />
     <ClInclude Include="TensorReadbackD3D12.hpp" />
     <ClInclude Include="util.hpp" />
+    <ClInclude Include="YoloSegPostProcessorD3D12.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

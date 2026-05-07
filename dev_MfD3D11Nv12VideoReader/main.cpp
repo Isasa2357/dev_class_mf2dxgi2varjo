@@ -20,6 +20,7 @@
 #include "TensorDebugSaverD3D12.hpp"
 #include "TensorReadbackD3D12.hpp"
 #include "OrtDmlYoloSegRunner.hpp"
+#include "YoloSegPostProcessorD3D12.hpp"
 
 #include "HResultUtil.hpp"
 
@@ -36,7 +37,7 @@ std::wstring stringToWstring(const std::string& str) {
     return wstr;
 }
 
-int _wmain(int argc, wchar_t** argv)
+int wmain(int argc, wchar_t** argv)
 {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
@@ -69,6 +70,8 @@ int _wmain(int argc, wchar_t** argv)
     long long preprocess_duration = 0;
     long long readback_input_tensor_duration = 0;
     long long predict_duration = 0;
+    long long postprocess_duration = 0;
+    long long frame_count = 0;
 
     try {
         // ------------------------------------------------------------
@@ -129,6 +132,29 @@ int _wmain(int argc, wchar_t** argv)
             0       // dml_device_id
         );
         yolo_runner.print_model_info();
+
+        YoloSegPostProcessorD3D12::Config post_config{};
+        post_config.num_attrs = 41;
+        post_config.num_candidates = 8400;
+        post_config.num_classes = 5;
+        post_config.num_mask_coeffs = 32;
+
+        post_config.mask_width = 160;
+        post_config.mask_height = 160;
+
+        post_config.max_candidates = 4096;
+        post_config.max_detections = 512;
+
+        post_config.conf_threshold = 0.25f;
+        post_config.iou_threshold = 0.45f;
+
+        post_config.input_width = 640.0f;
+        post_config.input_height = 640.0f;
+
+        YoloSegPostProcessorD3D12 postprocessor(
+            d3d12,
+            post_config
+        );
 
         // ------------------------------------------------------------
         // 4. frame 読み出し -> bridge -> D3D12 preprocess
@@ -218,34 +244,45 @@ int _wmain(int argc, wchar_t** argv)
 
             auto end_predict = std::chrono::high_resolution_clock::now();
 
-            for (const auto& out : outputs) {
-                std::cout
-                    << "Output: " << out.name
-                    << " shape=[";
+            postprocessor.upload_outputs_from_cpu(
+                outputs[0].data,
+                outputs[1].data
+            );
+            postprocessor.process_uploaded_outputs_and_wait();
 
-                for (size_t i = 0; i < out.shape.size(); ++i) {
-                    if (i != 0) {
-                        std::cout << ", ";
-                    }
-                    std::cout << out.shape[i];
-                }
+            auto end_postprocess = std::chrono::high_resolution_clock::now();
 
-                std::cout
-                    << "] elements="
-                    << out.data.size()
-                    << "\n";
-            }
+            std::vector<YoloSegPostProcessorD3D12::DetectionWithMask> results = postprocessor.readback_results();
+
+            std::cout << "frame idx: " << frame.frameIndex << ", detections: " << results.size() << "\n";
+
+            //for (const auto& det : detections) {
+            //    std::cout
+            //        << "class=" << det.class_id
+            //        << " score=" << det.score
+            //        << " box=("
+            //        << det.x1 << ", "
+            //        << det.y1 << ", "
+            //        << det.x2 << ", "
+            //        << det.y2 << ")"
+            //        << " candidate_index=" << det.candidate_index
+            //        << "\n";
+            //}
 
             mk_shared_texture_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_mk_shared_texture - start).count();
             preprocess_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_preprocess - end_mk_shared_texture).count();
             readback_input_tensor_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_mk_input_tensor - end_preprocess).count();
             predict_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_predict - end_mk_input_tensor).count();
+            postprocess_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_postprocess - end_predict).count();
+            frame_count += 1;
+            std::cout << "frame count: " << frame_count << std::endl;
 
-            std::wcout
-                << frame.frameIndex << " "
-                << L"Readback tensor elemnts: "
-                << input_tensor.size()
-                << std::endl;
+            //std::wcout
+            //    << frame.frameIndex << " "
+            //    << L"Readback tensor elemnts: "
+            //    << input_tensor.size()
+            //    << std::endl;
+            //break;
 
             /*
             std::wcout
@@ -254,16 +291,45 @@ int _wmain(int argc, wchar_t** argv)
                 << L"\n";
             */
 
-            if (frame.frameIndex % 500 == 0 and false) {
-                std::wstring path = L"img\\debug_yolo_input_d3d12_" + stringToWstring(std::to_string(frame.frameIndex)) + L".bmp";
+            if (frame.frameIndex % 500 == 0) {            
+                std::string path = "img\\debug_yolo_input_d3d12_" + std::to_string(frame.frameIndex) + ".bmp";
+                std::wstring wpath = stringToWstring(path);
+                std::string mask_path = "img\\debug_raw_mask";
+                std::wstring wmask_path = stringToWstring(mask_path);
 
-                SaveNchwFloatTensorD3D12BufferAsBmp(
-                    d3d12,
-                    preprocessor.output_tensor_buffer(),
-                    preprocessor.output_tensor_state_ref(),
+                std::vector<YoloSegPostProcessorD3D12::Detection> detections;
+                for (auto& result : results) {
+                    detections.push_back(result.detection);
+                }
+
+                std::cout << "save as " << path.data() << std::endl;
+
+                //SaveNchwFloatTensorWithDetectionsAsBmp(
+                //    input_tensor,
+                //    preprocessor.input_width(),
+                //    preprocessor.input_height(),
+                //    detections,
+                //    wpath.data(),
+                //    0.5f
+                //);
+
+                //SaveDetectionRawMasksAsBmp(
+                //    results,
+                //    wmask_path.data(),
+                //    true,  // normalize_min_max
+                //    0.5f   // score_threshold
+                //);
+
+                SaveNchwFloatTensorWithMasksAsBmp(
+                    input_tensor,
                     preprocessor.input_width(),
                     preprocessor.input_height(),
-                    path.data()
+                    results,
+                    wpath.data(),
+                    0.25f,  // score_threshold
+                    0.5f,   // mask_threshold
+                    0.45f,  // alpha
+                    true    // draw_bbox
                 );
             }
         }
@@ -276,16 +342,19 @@ int _wmain(int argc, wchar_t** argv)
 
     std::cout << "共有テクスチャ作成: " << std::endl;
     std::cout << "duration: " << mk_shared_texture_duration << " ms\n";
-    std::cout << "fps     : " << mk_shared_texture_duration / 9990 << " ms\n";
+    std::cout << "fps     : " << frame_count / (float(mk_shared_texture_duration) / 1000) << std::endl;
     std::cout << "前処理            : " << std::endl;
     std::cout << "duration: " << preprocess_duration << " ms\n";
-    std::cout << "fps     ; " << preprocess_duration / 9990 << " ms\n";
+    std::cout << "fps     ; " << frame_count / (float(preprocess_duration) / 1000) << std::endl;
     std::cout << "入力テンソル作成  : " << std::endl;
     std::cout << "duration: " << readback_input_tensor_duration << " ms\n";
-    std::cout << "fps     : " << readback_input_tensor_duration / 9990 << " ms\n";
+    std::cout << "fps     : " << frame_count / (float(readback_input_tensor_duration) / 1000) << std::endl;
     std::cout << "Predict: " << std::endl;
     std::cout << "duration: " << predict_duration << " ms" << std::endl;
-    std::cout << "fps     : " << predict_duration / 9990 << " ms" << std::endl;
+    std::cout << "fps     : " << frame_count / (float(predict_duration) / 1000) << std::endl;
+    std::cout << "Postprocess: " << std::endl;
+    std::cout << "duration: " << postprocess_duration << std::endl;
+    std::cout << "fps     : " << frame_count / (float(postprocess_duration) / 1000) << std::endl;
 
     MFShutdown();
     CoUninitialize();
@@ -293,53 +362,53 @@ int _wmain(int argc, wchar_t** argv)
     return result;
 }
 
-#include <iostream>
-#include <onnxruntime_c_api.h>
-#include <windows.h>
-#include <iostream>
-
-void PrintLoadedOnnxRuntimeDllPath()
-{
-    HMODULE h = GetModuleHandleW(L"onnxruntime.dll");
-
-    if (!h) {
-        std::wcout << L"onnxruntime.dll is not loaded yet\n";
-        return;
-    }
-
-    wchar_t path[MAX_PATH]{};
-    DWORD len = GetModuleFileNameW(h, path, MAX_PATH);
-
-    if (len > 0) {
-        std::wcout << L"Loaded onnxruntime.dll: " << path << L"\n";
-    } else {
-        std::wcout << L"GetModuleFileNameW failed\n";
-    }
-}
-
-int main()
-{
-    const OrtApiBase* base = OrtGetApiBase();
-
-    if (!base) {
-        std::cerr << "OrtGetApiBase returned nullptr\n";
-        return 1;
-    }
-
-    std::cout << "ORT version: " << base->GetVersionString() << "\n";
-
-    const OrtApi* api = base->GetApi(ORT_API_VERSION);
-
-    if (!api) {
-        std::cerr
-            << "base->GetApi(ORT_API_VERSION) returned nullptr\n"
-            << "ORT_API_VERSION=" << ORT_API_VERSION << "\n";
-        return 1;
-    }
-
-    std::cout << "OrtApi acquired\n";
-
-    PrintLoadedOnnxRuntimeDllPath();
-
-    return 0;
-}
+//#include <iostream>
+//#include <onnxruntime_c_api.h>
+//#include <windows.h>
+//#include <iostream>
+//
+//void PrintLoadedOnnxRuntimeDllPath()
+//{
+//    HMODULE h = GetModuleHandleW(L"onnxruntime.dll");
+//
+//    if (!h) {
+//        std::wcout << L"onnxruntime.dll is not loaded yet\n";
+//        return;
+//    }
+//
+//    wchar_t path[MAX_PATH]{};
+//    DWORD len = GetModuleFileNameW(h, path, MAX_PATH);
+//
+//    if (len > 0) {
+//        std::wcout << L"Loaded onnxruntime.dll: " << path << L"\n";
+//    } else {
+//        std::wcout << L"GetModuleFileNameW failed\n";
+//    }
+//}
+//
+//int main()
+//{
+//    const OrtApiBase* base = OrtGetApiBase();
+//
+//    if (!base) {
+//        std::cerr << "OrtGetApiBase returned nullptr\n";
+//        return 1;
+//    }
+//
+//    std::cout << "ORT version: " << base->GetVersionString() << "\n";
+//
+//    const OrtApi* api = base->GetApi(ORT_API_VERSION);
+//
+//    if (!api) {
+//        std::cerr
+//            << "base->GetApi(ORT_API_VERSION) returned nullptr\n"
+//            << "ORT_API_VERSION=" << ORT_API_VERSION << "\n";
+//        return 1;
+//    }
+//
+//    std::cout << "OrtApi acquired\n";
+//
+//    PrintLoadedOnnxRuntimeDllPath();
+//
+//    return 0;
+//}
