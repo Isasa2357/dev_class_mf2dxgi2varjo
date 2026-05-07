@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="dev_CameraCapture/dev_CameraCapture.vcxproj" Id="53c3c573-9293-409d-83a6-d5f32747619b" />
+  <Project Path="dev_MfD3D11Nv12VideoReader/dev_MfD3D11Nv12VideoReader.vcxproj" Id="8dc51cf0-67de-40dc-a1e2-1bc09307bbc4" />
+</Solution>

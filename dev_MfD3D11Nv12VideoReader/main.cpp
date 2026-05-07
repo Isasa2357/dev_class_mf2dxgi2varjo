@@ -1,0 +1,345 @@
+#define NOMINMAX
+
+#include <windows.h>
+
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <chrono>
+
+#include "D3D11Core.hpp"
+#include "D3D12Core.hpp"
+
+#include "MfD3D11Nv12VideoReader.hpp"
+#include "SharedNv12FrameBridge11To12.hpp"
+#include "Nv12YoloPreprocessorD3D12.hpp"
+#include "TensorDebugSaverD3D12.hpp"
+#include "TensorReadbackD3D12.hpp"
+#include "OrtDmlYoloSegRunner.hpp"
+
+#include "HResultUtil.hpp"
+
+// 必要なら
+#pragma comment(lib, "mf.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
+
+std::wstring stringToWstring(const std::string& str) {
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+    std::wstring wstr(size_needed, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], size_needed);
+    return wstr;
+}
+
+int _wmain(int argc, wchar_t** argv)
+{
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+
+    if (argc < 2) {
+        std::wcerr << L"Usage: dev_MfD3D11Nv12VideoReader.exe input.mp4\n";
+        return 1;
+    }
+
+    HRESULT hr = CoInitializeEx(
+        nullptr,
+        COINIT_MULTITHREADED
+    );
+
+    if (FAILED(hr)) {
+        std::cerr << "CoInitializeEx failed\n";
+        return 1;
+    }
+
+    hr = MFStartup(MF_VERSION);
+
+    if (FAILED(hr)) {
+        std::cerr << "MFStartup failed\n";
+        CoUninitialize();
+        return 1;
+    }
+
+    int result = 0;
+    long long mk_shared_texture_duration = 0;
+    long long preprocess_duration = 0;
+    long long readback_input_tensor_duration = 0;
+    long long predict_duration = 0;
+
+    try {
+        // ------------------------------------------------------------
+        // 1. D3D11 / D3D12 Core 初期化
+        // ------------------------------------------------------------
+
+        D3D11Core d3d11;
+        d3d11.initialize(
+            false,  // enable_debug_layer
+            true    // enable_multithread_protection
+        );
+
+        d3d11.print_adapter_info();
+
+        D3D12Core d3d12;
+        d3d12.initialize_with_adapter_LUID(
+            d3d11.adapter_LUID(),
+            true    // enable_debug_layer
+        );
+
+        d3d12.print_adapter_info();
+
+        // ------------------------------------------------------------
+        // 2. Video reader 初期化
+        // ------------------------------------------------------------
+
+        MfD3D11Nv12VideoReader video_reader(
+            argv[1],
+            d3d11
+        );
+
+        //std::wcout
+        //    << L"Video size: "
+        //    << video_reader.width()
+        //    << L" x "
+        //    << video_reader.height()
+        //    << L"\n";
+
+        // ------------------------------------------------------------
+        // 3. D3D12 preprocessor 初期化
+        // ------------------------------------------------------------
+
+        Nv12YoloPreprocessorD3D12::Config preprocessor_config{};
+        preprocessor_config.input_width = 640;
+        preprocessor_config.input_height = 640;
+        preprocessor_config.limited_range_yuv = true;
+        preprocessor_config.pad_value = 114.0f / 255.0f;
+
+        Nv12YoloPreprocessorD3D12 preprocessor(
+            d3d12,
+            preprocessor_config
+        );
+
+        OrtDmlYoloSegRunner yolo_runner;
+        yolo_runner.initialize(
+            L"model\\best_n_300.onnx",
+            true,   // use_directml
+            0       // dml_device_id
+        );
+        yolo_runner.print_model_info();
+
+        // ------------------------------------------------------------
+        // 4. frame 読み出し -> bridge -> D3D12 preprocess
+        // ------------------------------------------------------------
+
+        D3D11VideoFrame frame{};
+
+        std::unique_ptr<SharedNv12FrameBridge11To12> bridge;
+
+        while (video_reader.read_next_frame(frame)) {
+            //std::wcout
+            //    << L"Frame "
+            //    << frame.frameIndex
+            //    << L" timestamp100ns="
+            //    << frame.timestamp100ns
+            //    << L" size="
+            //    << frame.width
+            //    << L"x"
+            //    << frame.height
+            //    << L" subresource="
+            //    << frame.subresourceIndex
+            //    << L"\n";
+
+            // 動画サイズが分かったタイミングで bridge を作る
+            if (!bridge ||
+                bridge->width() != frame.width ||
+                bridge->height() != frame.height) {
+                bridge = std::make_unique<SharedNv12FrameBridge11To12>(
+                    d3d11,
+                    d3d12,
+                    frame.width,
+                    frame.height
+                );
+            }
+
+            // --------------------------------------------------------
+            // D3D11 decoder texture -> D3D11 shared NV12 texture
+            // --------------------------------------------------------
+
+            auto start = std::chrono::high_resolution_clock::now();
+
+            bridge->copy_from_d3d11_frame_and_wait(
+                frame.texture.Get(),
+                frame.subresourceIndex
+            );
+
+            auto end_mk_shared_texture = std::chrono::high_resolution_clock::now();
+
+            // --------------------------------------------------------
+            // D3D12 側で shared NV12 texture を読む
+            // keyed mutex で、D3D12処理中は D3D11側が上書きしないようにする
+            // --------------------------------------------------------
+
+            bridge->acquire_for_d3d12_read_guard();
+
+            preprocessor.preprocess_and_wait(
+                bridge->d3d12_nv12_texture(),
+                frame.width,
+                frame.height
+            );
+
+            bridge->release_from_d3d12_read_guard();
+
+            auto end_preprocess = std::chrono::high_resolution_clock::now();
+
+            ID3D12Resource* yolo_input_tensor =
+                preprocessor.output_tensor_buffer();
+
+            std::vector<float> input_tensor = ReadbackNchwFloatTensorD3D12Buffer(
+                d3d12,
+                preprocessor.output_tensor_buffer(),
+                preprocessor.output_tensor_state_ref(),
+                preprocessor.input_width(),
+                preprocessor.input_height(),
+                3
+            );
+
+            auto end_mk_input_tensor = std::chrono::high_resolution_clock::now();
+
+            std::vector<OrtDmlYoloSegRunner::OutputTensor> outputs = yolo_runner.run_cpu_input(
+                input_tensor,
+                1,
+                3,
+                preprocessor.input_height(),
+                preprocessor.input_width()
+            );
+
+            auto end_predict = std::chrono::high_resolution_clock::now();
+
+            for (const auto& out : outputs) {
+                std::cout
+                    << "Output: " << out.name
+                    << " shape=[";
+
+                for (size_t i = 0; i < out.shape.size(); ++i) {
+                    if (i != 0) {
+                        std::cout << ", ";
+                    }
+                    std::cout << out.shape[i];
+                }
+
+                std::cout
+                    << "] elements="
+                    << out.data.size()
+                    << "\n";
+            }
+
+            mk_shared_texture_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_mk_shared_texture - start).count();
+            preprocess_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_preprocess - end_mk_shared_texture).count();
+            readback_input_tensor_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_mk_input_tensor - end_preprocess).count();
+            predict_duration += std::chrono::duration_cast<std::chrono::milliseconds>(end_predict - end_mk_input_tensor).count();
+
+            std::wcout
+                << frame.frameIndex << " "
+                << L"Readback tensor elemnts: "
+                << input_tensor.size()
+                << std::endl;
+
+            /*
+            std::wcout
+                << L"D3D12 YOLO preprocess completed. Tensor elements = "
+                << preprocessor.tensor_element_count()
+                << L"\n";
+            */
+
+            if (frame.frameIndex % 500 == 0 and false) {
+                std::wstring path = L"img\\debug_yolo_input_d3d12_" + stringToWstring(std::to_string(frame.frameIndex)) + L".bmp";
+
+                SaveNchwFloatTensorD3D12BufferAsBmp(
+                    d3d12,
+                    preprocessor.output_tensor_buffer(),
+                    preprocessor.output_tensor_state_ref(),
+                    preprocessor.input_width(),
+                    preprocessor.input_height(),
+                    path.data()
+                );
+            }
+        }
+
+        std::wcout << L"Finished\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        result = 1;
+    }
+
+    std::cout << "共有テクスチャ作成: " << std::endl;
+    std::cout << "duration: " << mk_shared_texture_duration << " ms\n";
+    std::cout << "fps     : " << mk_shared_texture_duration / 9990 << " ms\n";
+    std::cout << "前処理            : " << std::endl;
+    std::cout << "duration: " << preprocess_duration << " ms\n";
+    std::cout << "fps     ; " << preprocess_duration / 9990 << " ms\n";
+    std::cout << "入力テンソル作成  : " << std::endl;
+    std::cout << "duration: " << readback_input_tensor_duration << " ms\n";
+    std::cout << "fps     : " << readback_input_tensor_duration / 9990 << " ms\n";
+    std::cout << "Predict: " << std::endl;
+    std::cout << "duration: " << predict_duration << " ms" << std::endl;
+    std::cout << "fps     : " << predict_duration / 9990 << " ms" << std::endl;
+
+    MFShutdown();
+    CoUninitialize();
+
+    return result;
+}
+
+#include <iostream>
+#include <onnxruntime_c_api.h>
+#include <windows.h>
+#include <iostream>
+
+void PrintLoadedOnnxRuntimeDllPath()
+{
+    HMODULE h = GetModuleHandleW(L"onnxruntime.dll");
+
+    if (!h) {
+        std::wcout << L"onnxruntime.dll is not loaded yet\n";
+        return;
+    }
+
+    wchar_t path[MAX_PATH]{};
+    DWORD len = GetModuleFileNameW(h, path, MAX_PATH);
+
+    if (len > 0) {
+        std::wcout << L"Loaded onnxruntime.dll: " << path << L"\n";
+    } else {
+        std::wcout << L"GetModuleFileNameW failed\n";
+    }
+}
+
+int main()
+{
+    const OrtApiBase* base = OrtGetApiBase();
+
+    if (!base) {
+        std::cerr << "OrtGetApiBase returned nullptr\n";
+        return 1;
+    }
+
+    std::cout << "ORT version: " << base->GetVersionString() << "\n";
+
+    const OrtApi* api = base->GetApi(ORT_API_VERSION);
+
+    if (!api) {
+        std::cerr
+            << "base->GetApi(ORT_API_VERSION) returned nullptr\n"
+            << "ORT_API_VERSION=" << ORT_API_VERSION << "\n";
+        return 1;
+    }
+
+    std::cout << "OrtApi acquired\n";
+
+    PrintLoadedOnnxRuntimeDllPath();
+
+    return 0;
+}
