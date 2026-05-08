@@ -86,6 +86,10 @@ public:
 
     const Config& config() const;
 
+    D3D12_RESOURCE_STATES& selected_detection_state_ref() { return this->selected_detection_state_; }
+    D3D12_RESOURCE_STATES& selected_counter_state_ref() { return this->selected_counter_state_; }
+    D3D12_RESOURCE_STATES& selected_mask_state_ref() { return this->selected_mask_state_; }
+
 private:
     struct ShaderParams {
         UINT num_attrs;

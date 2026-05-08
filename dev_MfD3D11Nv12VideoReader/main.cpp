@@ -21,6 +21,7 @@
 #include "TensorReadbackD3D12.hpp"
 #include "OrtDmlYoloSegRunner.hpp"
 #include "YoloSegPostProcessorD3D12.hpp"
+#include "ToolTipDetectorD3D12.hpp"
 
 #include "HResultUtil.hpp"
 
@@ -156,6 +157,23 @@ int wmain(int argc, wchar_t** argv)
             post_config
         );
 
+        ToolTipDetectorD3D12::Config tip_config{};
+        tip_config.max_detections = 512;
+        tip_config.mask_width = 160;
+        tip_config.mask_height = 160;
+        tip_config.input_width = 640.0f;
+        tip_config.input_height = 640.0f;
+        tip_config.target_class_id = 1;
+        tip_config.mask_threshold = 0.5f;
+        tip_config.min_area_pixels = 10;
+        tip_config.end_region_ratio = 0.10f;
+        tip_config.top_edge_ratio = 0.05f;
+
+        ToolTipDetectorD3D12 tip_detector(
+            d3d12,
+            tip_config
+        );
+
         // ------------------------------------------------------------
         // 4. frame 読み出し -> bridge -> D3D12 preprocess
         // ------------------------------------------------------------
@@ -249,12 +267,37 @@ int wmain(int argc, wchar_t** argv)
                 outputs[1].data
             );
             postprocessor.process_uploaded_outputs_and_wait();
+            std::vector<YoloSegPostProcessorD3D12::DetectionWithMask> results = postprocessor.readback_results();
 
             auto end_postprocess = std::chrono::high_resolution_clock::now();
 
-            std::vector<YoloSegPostProcessorD3D12::DetectionWithMask> results = postprocessor.readback_results();
+            tip_detector.detect_and_wait(
+                postprocessor.selected_detection_buffer(),
+                postprocessor.selected_detection_state_ref(),
+                postprocessor.selected_counter_buffer(),
+                postprocessor.selected_counter_state_ref(),
+                postprocessor.selected_mask_buffer(),
+                postprocessor.selected_mask_state_ref()
+            );
+
+            auto tip_results = tip_detector.readback_results();
 
             std::cout << "frame idx: " << frame.frameIndex << ", detections: " << results.size() << "\n";
+
+            for (const auto& r : tip_results) {
+                std::cout
+                    << "det=" << r.detection_index
+                    << " class=" << r.class_id
+                    << " selectedCandidate=" << r.selected_candidate
+                    << " tipMask=(" << r.tip_x_mask << ", " << r.tip_y_mask << ")"
+                    << " tipInput=(" << r.tip_x_input << ", " << r.tip_y_input << ")"
+                    << " c1=(" << r.candidate1_x_mask << ", " << r.candidate1_y_mask
+                    << ") width1=" << r.candidate1_width
+                    << " c2=(" << r.candidate2_x_mask << ", " << r.candidate2_y_mask
+                    << ") width2=" << r.candidate2_width
+                    << " area=" << r.area
+                    << "\n";
+            }
 
             //for (const auto& det : detections) {
             //    std::cout
@@ -320,16 +363,26 @@ int wmain(int argc, wchar_t** argv)
                 //    0.5f   // score_threshold
                 //);
 
-                SaveNchwFloatTensorWithMasksAsBmp(
+                //SaveNchwFloatTensorWithMasksAsBmp(
+                //    input_tensor,
+                //    preprocessor.input_width(),
+                //    preprocessor.input_height(),
+                //    results,
+                //    wpath.data(),
+                //    0.25f,  // score_threshold
+                //    0.5f,   // mask_threshold
+                //    0.45f,  // alpha
+                //    true    // draw_bbox
+                //);
+
+                SaveNchwFloatTensorWithToolTipsAsBmp(
                     input_tensor,
                     preprocessor.input_width(),
                     preprocessor.input_height(),
-                    results,
+                    tip_results,
                     wpath.data(),
-                    0.25f,  // score_threshold
-                    0.5f,   // mask_threshold
-                    0.45f,  // alpha
-                    true    // draw_bbox
+                    true,   // draw_candidates
+                    true    // draw_axis
                 );
             }
         }

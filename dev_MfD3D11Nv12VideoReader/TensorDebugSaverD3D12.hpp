@@ -14,6 +14,7 @@
 
 #include "D3D12Core.hpp"
 #include "YoloSegPostProcessorD3D12.hpp"
+#include "ToolTipDetectorD3D12.hpp"
 
 
 void SaveNchwFloatTensorD3D12BufferAsBmp(
@@ -65,4 +66,14 @@ void SaveNchwFloatTensorWithMasksAsBmp(
     float mask_threshold = 0.5f,
     float alpha = 0.45f,
     bool draw_bbox = true
+);
+
+void SaveNchwFloatTensorWithToolTipsAsBmp(
+    const std::vector<float>& nchw_rgb_tensor,
+    UINT width,
+    UINT height,
+    const std::vector<ToolTipDetectorD3D12::TipResult>& tip_results,
+    const wchar_t* output_path,
+    bool draw_candidates = true,
+    bool draw_axis = true
 );

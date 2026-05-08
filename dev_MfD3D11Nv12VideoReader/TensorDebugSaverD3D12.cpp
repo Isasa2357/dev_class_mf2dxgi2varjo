@@ -317,6 +317,95 @@ namespace {
                 );
     }
 
+    void GetTipClassColorRgb(
+        uint32_t class_id,
+        uint8_t& r,
+        uint8_t& g,
+        uint8_t& b
+    )
+    {
+        static constexpr uint8_t palette[][3] = {
+            {255,   0,   0}, // red
+            {  0, 255,   0}, // green
+            {  0, 128, 255}, // blue/cyan
+            {255, 255,   0}, // yellow
+            {255,   0, 255}, // magenta
+            {  0, 255, 255}, // cyan
+            {255, 128,   0}, // orange
+            {128,   0, 255}, // purple
+        };
+
+        constexpr size_t palette_size =
+            sizeof(palette) / sizeof(palette[0]);
+
+        const size_t idx =
+            static_cast<size_t>(class_id) % palette_size;
+
+        r = palette[idx][0];
+        g = palette[idx][1];
+        b = palette[idx][2];
+    }
+
+    void DrawCrossRgb(
+        std::vector<uint8_t>& rgb,
+        UINT width,
+        UINT height,
+        int cx,
+        int cy,
+        uint8_t r,
+        uint8_t g,
+        uint8_t b,
+        int radius
+    )
+    {
+        for (int d = -radius; d <= radius; ++d) {
+            SetPixelRgb(rgb, width, height, cx + d, cy, r, g, b);
+            SetPixelRgb(rgb, width, height, cx, cy + d, r, g, b);
+        }
+    }
+
+    void DrawLineRgb(
+        std::vector<uint8_t>& rgb,
+        UINT width,
+        UINT height,
+        int x0,
+        int y0,
+        int x1,
+        int y1,
+        uint8_t r,
+        uint8_t g,
+        uint8_t b
+    )
+    {
+        int dx = std::abs(x1 - x0);
+        int sx = x0 < x1 ? 1 : -1;
+
+        int dy = -std::abs(y1 - y0);
+        int sy = y0 < y1 ? 1 : -1;
+
+        int err = dx + dy;
+
+        while (true) {
+            SetPixelRgb(rgb, width, height, x0, y0, r, g, b);
+
+            if (x0 == x1 && y0 == y1) {
+                break;
+            }
+
+            const int e2 = 2 * err;
+
+            if (e2 >= dy) {
+                err += dy;
+                x0 += sx;
+            }
+
+            if (e2 <= dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+
 } // namespace
 
 void SaveNchwFloatTensorD3D12BufferAsBmp(
@@ -1015,6 +1104,252 @@ void SaveNchwFloatTensorWithMasksAsBmp(
                 255
             );
         }
+    }
+
+    WriteRgbAsTopDownBmp(
+        rgb,
+        width,
+        height,
+        output_path
+    );
+}
+
+void SaveNchwFloatTensorWithToolTipsAsBmp(
+    const std::vector<float>& nchw_rgb_tensor,
+    UINT width,
+    UINT height,
+    const std::vector<ToolTipDetectorD3D12::TipResult>& tip_results,
+    const wchar_t* output_path,
+    bool draw_candidates,
+    bool draw_axis
+)
+{
+    if (width == 0 || height == 0) {
+        throw std::runtime_error("SaveNchwFloatTensorWithToolTipsAsBmp: invalid image size");
+    }
+
+    if (!output_path) {
+        throw std::runtime_error("SaveNchwFloatTensorWithToolTipsAsBmp: output_path is null");
+    }
+
+    const size_t hw =
+        static_cast<size_t>(width) *
+        static_cast<size_t>(height);
+
+    const size_t expected_size = hw * 3;
+
+    if (nchw_rgb_tensor.size() < expected_size) {
+        throw std::runtime_error("SaveNchwFloatTensorWithToolTipsAsBmp: nchw_rgb_tensor is too small");
+    }
+
+    std::vector<uint8_t> rgb(hw * 3);
+
+    const float* r_plane =
+        nchw_rgb_tensor.data() + 0 * hw;
+
+    const float* g_plane =
+        nchw_rgb_tensor.data() + 1 * hw;
+
+    const float* b_plane =
+        nchw_rgb_tensor.data() + 2 * hw;
+
+    // ------------------------------------------------------------
+    // NCHW float RGB -> RGB uint8 image
+    // ------------------------------------------------------------
+
+    for (UINT y = 0; y < height; ++y) {
+        for (UINT x = 0; x < width; ++x) {
+            const size_t idx =
+                static_cast<size_t>(y) *
+                static_cast<size_t>(width) +
+                static_cast<size_t>(x);
+
+            rgb[idx * 3 + 0] = Float01ToU8(r_plane[idx]);
+            rgb[idx * 3 + 1] = Float01ToU8(g_plane[idx]);
+            rgb[idx * 3 + 2] = Float01ToU8(b_plane[idx]);
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Plot tool tip results
+    // tip_x_input / tip_y_input は YOLO input 空間の座標を想定
+    // つまり width,height が 640x640 ならそのまま描画できる
+    // ------------------------------------------------------------
+
+    for (const auto& tip : tip_results) {
+        if (tip.valid == 0) {
+            continue;
+        }
+
+        uint8_t cr = 255;
+        uint8_t cg = 0;
+        uint8_t cb = 0;
+
+        GetTipClassColorRgb(
+            tip.class_id,
+            cr,
+            cg,
+            cb
+        );
+
+        const int tip_x =
+            static_cast<int>(std::round(tip.tip_x_input));
+
+        const int tip_y =
+            static_cast<int>(std::round(tip.tip_y_input));
+
+        const int c1_x =
+            static_cast<int>(
+                std::round(
+                    tip.candidate1_x_mask *
+                    static_cast<float>(width) /
+                    160.0f
+                )
+                );
+
+        const int c1_y =
+            static_cast<int>(
+                std::round(
+                    tip.candidate1_y_mask *
+                    static_cast<float>(height) /
+                    160.0f
+                )
+                );
+
+        const int c2_x =
+            static_cast<int>(
+                std::round(
+                    tip.candidate2_x_mask *
+                    static_cast<float>(width) /
+                    160.0f
+                )
+                );
+
+        const int c2_y =
+            static_cast<int>(
+                std::round(
+                    tip.candidate2_y_mask *
+                    static_cast<float>(height) /
+                    160.0f
+                )
+                );
+
+        // candidate同士を薄い線で結ぶ
+        if (draw_candidates) {
+            DrawLineRgb(
+                rgb,
+                width,
+                height,
+                c1_x,
+                c1_y,
+                c2_x,
+                c2_y,
+                255,
+                255,
+                255
+            );
+
+            // candidate1: yellow
+            DrawCrossRgb(
+                rgb,
+                width,
+                height,
+                c1_x,
+                c1_y,
+                255,
+                255,
+                0,
+                5
+            );
+
+            // candidate2: cyan
+            DrawCrossRgb(
+                rgb,
+                width,
+                height,
+                c2_x,
+                c2_y,
+                0,
+                255,
+                255,
+                5
+            );
+        }
+
+        // 主軸方向を表示
+        if (draw_axis) {
+            const float axis_scale = 40.0f;
+
+            const int ax0 =
+                static_cast<int>(
+                    std::round(
+                        static_cast<float>(tip_x) -
+                        tip.axis_x * axis_scale
+                    )
+                    );
+
+            const int ay0 =
+                static_cast<int>(
+                    std::round(
+                        static_cast<float>(tip_y) -
+                        tip.axis_y * axis_scale
+                    )
+                    );
+
+            const int ax1 =
+                static_cast<int>(
+                    std::round(
+                        static_cast<float>(tip_x) +
+                        tip.axis_x * axis_scale
+                    )
+                    );
+
+            const int ay1 =
+                static_cast<int>(
+                    std::round(
+                        static_cast<float>(tip_y) +
+                        tip.axis_y * axis_scale
+                    )
+                    );
+
+            DrawLineRgb(
+                rgb,
+                width,
+                height,
+                ax0,
+                ay0,
+                ax1,
+                ay1,
+                cr,
+                cg,
+                cb
+            );
+        }
+
+        // 採用された先端中心: class色の大きめクロス
+        DrawCrossRgb(
+            rgb,
+            width,
+            height,
+            tip_x,
+            tip_y,
+            cr,
+            cg,
+            cb,
+            8
+        );
+
+        // 中心点を白く強調
+        DrawSmallMarkerRgb(
+            rgb,
+            width,
+            height,
+            tip_x,
+            tip_y,
+            255,
+            255,
+            255
+        );
     }
 
     WriteRgbAsTopDownBmp(
