@@ -65,27 +65,7 @@ namespace {
             std::cout
                 << "avg     : "
                 << static_cast<double>(duration_ms_sum) /
-                   static_cast<double>(frame_count)
-                << " ms/frame\n";
-        }
-        else {
-            std::cout << "avg     : n/a\n";
-        }
-    }
-
-    void print_gpu_sum_and_average(
-        const char* label,
-        double duration_ms_sum,
-        long long frame_count
-    )
-    {
-        std::cout << label << ":\n";
-        std::cout << "sum     : " << duration_ms_sum << " ms\n";
-
-        if (frame_count > 0) {
-            std::cout
-                << "avg     : "
-                << duration_ms_sum / static_cast<double>(frame_count)
+                static_cast<double>(frame_count)
                 << " ms/frame\n";
         }
         else {
@@ -129,19 +109,22 @@ int wmain(int argc, wchar_t** argv)
     long long bridge_copy_duration_sum = 0;
     long long preprocess_duration_sum = 0;
     long long ort_duration_sum = 0;
-    long long postprocess_cpu_submit_duration_sum = 0;
-    long long tooltip_readback_duration_sum = 0;
+    long long postprocess_duration_sum = 0;
+    long long tooltip_duration_sum = 0;
     long long debug_save_duration_sum = 0;
-    long long latency_total_duration_sum = 0;
 
-    double gpu_postprocess_duration_sum = 0.0;
-    double gpu_tooltip_duration_sum = 0.0;
-    double gpu_postprocess_tooltip_total_sum = 0.0;
+    // 非同期版では total は「submitからpollまでのlatency寄り」になりやすい。
+    // throughput fps の計算には使わず、latency観察用として扱う。
+    long long latency_total_duration_sum = 0;
 
     long long submitted_frame_count = 0;
     long long completed_frame_count = 0;
 
     try {
+        // ------------------------------------------------------------
+        // D3D11 / D3D12
+        // ------------------------------------------------------------
+
         D3D11Core d3d11;
         d3d11.initialize(
             false,  // enable_debug_layer
@@ -156,10 +139,18 @@ int wmain(int argc, wchar_t** argv)
         );
         d3d12.print_adapter_info();
 
+        // ------------------------------------------------------------
+        // Video reader
+        // ------------------------------------------------------------
+
         MfD3D11Nv12VideoReader video_reader(
             argv[1],
             d3d11
         );
+
+        // ------------------------------------------------------------
+        // Pipeline config
+        // ------------------------------------------------------------
 
         ToolTipPipelineD3D12::Config pipeline_config{};
         pipeline_config.model_path =
@@ -188,11 +179,13 @@ int wmain(int argc, wchar_t** argv)
         pipeline_config.top_edge_ratio = 0.05f;
         pipeline_config.edge_reject_ratio = 0.02f;
 
+        // slot settings
         pipeline_config.bridge_slot_count = 3;
         pipeline_config.processing_slot_count = 3;
 
-        // Performance profiling should run with debug image saving disabled.
-        pipeline_config.enable_original_tip_debug_image_save = true;
+        // 性能比較時は必ず false。
+        // trueにすると元画像/mask/tip debug保存のreadbackとBMP書き込みが入る。
+        pipeline_config.enable_original_tip_debug_image_save = false;
         pipeline_config.original_tip_debug_save_interval = 250;
         pipeline_config.debug_output_directory = "img";
         pipeline_config.debug_score_threshold = 0.25f;
@@ -209,38 +202,44 @@ int wmain(int argc, wchar_t** argv)
 
         D3D11VideoFrame frame{};
 
-        auto consume_result = [ & ](
+        auto consume_result = [&](
             const ToolTipPipelineD3D12::PipelineFrameResult& frame_result
-        ) {
-            bridge_copy_duration_sum += frame_result.timing.bridge_copy;
-            preprocess_duration_sum += frame_result.timing.preprocess;
-            ort_duration_sum += frame_result.timing.ort_inference;
-            postprocess_cpu_submit_duration_sum += frame_result.timing.postprocess;
-            tooltip_readback_duration_sum += frame_result.timing.tooltip_detect_and_readback;
-            debug_save_duration_sum += frame_result.timing.debug_save;
-            latency_total_duration_sum += frame_result.timing.total;
+            ) {
+                bridge_copy_duration_sum += frame_result.timing.bridge_copy;
+                preprocess_duration_sum += frame_result.timing.preprocess;
+                ort_duration_sum += frame_result.timing.ort_inference;
+                postprocess_duration_sum += frame_result.timing.postprocess;
+                tooltip_duration_sum += frame_result.timing.tooltip_detect_and_readback;
+                debug_save_duration_sum += frame_result.timing.debug_save;
+                latency_total_duration_sum += frame_result.timing.total;
 
-            gpu_postprocess_duration_sum += frame_result.timing.gpu_postprocess;
-            gpu_tooltip_duration_sum += frame_result.timing.gpu_tooltip;
-            gpu_postprocess_tooltip_total_sum +=
-                frame_result.timing.gpu_postprocess_tooltip_total;
+                ++completed_frame_count;
 
-            ++completed_frame_count;
+                // 必要なら一部フレームだけログ表示
+                /*
+                if (frame_result.frame_index % 250 == 0) {
+                    std::cout
+                        << "frame=" << frame_result.frame_index
+                        << " bridge_slot=" << frame_result.bridge_slot_index
+                        << " processing_slot=" << frame_result.processing_slot_index
+                        << " tips=" << frame_result.tips.size()
+                        << " latency_ms=" << frame_result.timing.total
+                        << "\n";
 
-            // Optional per-frame debug log.
-            /*
-            if (frame_result.frame_index % 250 == 0) {
-                std::cout
-                    << "frame=" << frame_result.frame_index
-                    << " tips=" << frame_result.tips.size()
-                    << " cpu_ort_ms=" << frame_result.timing.ort_inference
-                    << " gpu_post_ms=" << frame_result.timing.gpu_postprocess
-                    << " gpu_tip_ms=" << frame_result.timing.gpu_tooltip
-                    << " latency_ms=" << frame_result.timing.total
-                    << "\n";
-            }
-            */
-        };
+                    for (const auto& tip : frame_result.tips) {
+                        std::cout
+                            << "  tip det=" << tip.detection_index
+                            << " class=" << tip.class_id
+                            << " selected=" << tip.selected_candidate
+                            << " conf=" << tip.confidence
+                            << " orig=(" << tip.tip_x_original
+                            << ", " << tip.tip_y_original << ")"
+                            << " failure=" << tip.failure_reason
+                            << "\n";
+                    }
+                }
+                */
+            };
 
         const auto wall_start =
             std::chrono::high_resolution_clock::now();
@@ -269,6 +268,10 @@ int wmain(int argc, wchar_t** argv)
 
         std::wcout << L"Finished\n";
 
+        // ------------------------------------------------------------
+        // Timing summary
+        // ------------------------------------------------------------
+
         std::cout << "\n===== Throughput summary =====\n";
         std::cout << "submitted frames : " << submitted_frame_count << "\n";
         std::cout << "completed frames : " << completed_frame_count << "\n";
@@ -279,67 +282,44 @@ int wmain(int argc, wchar_t** argv)
             completed_frame_count
         );
 
-        std::cout << "\n===== CPU-side timing sums =====\n";
+        std::cout << "\n===== Per-stage timing sums =====\n";
         std::cout
-            << "Note: these timings include CPU work and waits visible to the caller.\n"
-            << "      ORT/DML inference is measured as CPU wall time around Session::Run.\n";
+            << "Note: stage timing sums are useful for observation, but their fps values\n"
+            << "      are not the true async throughput. Use wall clock throughput above.\n";
 
         print_sum_and_average(
-            "Bridge copy CPU/wait",
+            "Bridge copy",
             bridge_copy_duration_sum,
             completed_frame_count
         );
 
         print_sum_and_average(
-            "Preprocess CPU/wait",
+            "Preprocess",
             preprocess_duration_sum,
             completed_frame_count
         );
 
         print_sum_and_average(
-            "ORT/DML inference CPU wall",
+            "ORT/DML inference",
             ort_duration_sum,
             completed_frame_count
         );
 
         print_sum_and_average(
-            "Postprocess+tooltip command submit CPU",
-            postprocess_cpu_submit_duration_sum,
+            "Postprocess + tooltip GPU",
+            postprocess_duration_sum,
             completed_frame_count
         );
 
         print_sum_and_average(
-            "Tooltip final readback CPU/wait",
-            tooltip_readback_duration_sum,
+            "Tooltip final readback",
+            tooltip_duration_sum,
             completed_frame_count
         );
 
         print_sum_and_average(
             "Debug save",
             debug_save_duration_sum,
-            completed_frame_count
-        );
-
-        std::cout << "\n===== D3D12 GPU timestamp timings =====\n";
-        std::cout
-            << "These measure only the GPU commands between timestamp queries.\n"
-            << "Currently this covers YOLO postprocess and tooltip detector compute.\n";
-
-        print_gpu_sum_and_average(
-            "GPU YOLO postprocess",
-            gpu_postprocess_duration_sum,
-            completed_frame_count
-        );
-
-        print_gpu_sum_and_average(
-            "GPU tooltip detector",
-            gpu_tooltip_duration_sum,
-            completed_frame_count
-        );
-
-        print_gpu_sum_and_average(
-            "GPU postprocess + tooltip total",
-            gpu_postprocess_tooltip_total_sum,
             completed_frame_count
         );
 

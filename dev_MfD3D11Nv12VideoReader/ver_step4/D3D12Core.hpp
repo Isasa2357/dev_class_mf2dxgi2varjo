@@ -69,6 +69,10 @@ public:
 
     void execute_command_list();
 
+    // Execute an external already-closed command list on the shared queue,
+    // then signal the internal fence. This is used by per-slot command lists.
+    UINT64 execute_command_list_and_signal(ID3D12CommandList* command_list);
+
     // Close and execute the current command list, then signal the internal fence.
     // This does not wait. The returned fence value can be queried with
     // is_fence_complete() or waited with wait_for_fence().

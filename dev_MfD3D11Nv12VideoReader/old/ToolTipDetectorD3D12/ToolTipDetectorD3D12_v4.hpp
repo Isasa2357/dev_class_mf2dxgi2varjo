@@ -67,7 +67,7 @@ public:
 
         // 候補点が上下左右の端からこの割合以内なら、その候補を棄却する。
         // 0.03なら、元画像の上下左右端から3%以内を端扱いにする。
-        float edge_reject_ratio = 0.2f;
+        float edge_reject_ratio = 0.03f;
     };
 
     struct TipResult {
@@ -133,19 +133,6 @@ public:
     );
 
     void detect_and_wait(
-        ID3D12Resource* selected_detection_buffer,
-        D3D12_RESOURCE_STATES& selected_detection_state,
-        ID3D12Resource* selected_counter_buffer,
-        D3D12_RESOURCE_STATES& selected_counter_state,
-        ID3D12Resource* selected_mask_buffer,
-        D3D12_RESOURCE_STATES& selected_mask_state
-    );
-
-    // Record tooltip detection commands into an already-open D3D12 command list.
-    // This does not reset, close, execute, or wait. It is used by the pipeline
-    // to batch postprocess + tooltip detection into a single GPU submission.
-    void record_detect_commands(
-        ID3D12GraphicsCommandList* command_list,
         ID3D12Resource* selected_detection_buffer,
         D3D12_RESOURCE_STATES& selected_detection_state,
         ID3D12Resource* selected_counter_buffer,

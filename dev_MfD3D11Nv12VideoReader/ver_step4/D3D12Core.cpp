@@ -110,6 +110,36 @@ void D3D12Core::execute_command_list()
     );
 }
 
+
+UINT64 D3D12Core::execute_command_list_and_signal(ID3D12CommandList* command_list)
+{
+    if (!this->command_queue_ || !this->fence_) {
+        throw std::runtime_error("D3D12Core::execute_command_list_and_signal: queue/fence is null");
+    }
+    if (!command_list) {
+        throw std::runtime_error("D3D12Core::execute_command_list_and_signal: command_list is null");
+    }
+
+    ID3D12CommandList* command_lists[] = {
+        command_list
+    };
+
+    this->command_queue_->ExecuteCommandLists(
+        1,
+        command_lists
+    );
+
+    const UINT64 signal_value = ++this->fence_value_;
+
+    HRESULT hr = this->command_queue_->Signal(
+        this->fence_.Get(),
+        signal_value
+    );
+    win_util::ThrowIfFailed(hr, "ID3D12CommandQueue::Signal failed");
+
+    return signal_value;
+}
+
 UINT64 D3D12Core::close_execute_and_signal()
 {
     this->close_command_list();

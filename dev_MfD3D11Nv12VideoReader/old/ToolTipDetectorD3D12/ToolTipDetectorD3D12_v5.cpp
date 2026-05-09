@@ -577,40 +577,6 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
     }
 
-    // ------------------------------------------------------------
-    // Limit all mask scans to the detection bbox in 160x160 mask space.
-    // det.x1/y1/x2/y2 are in YOLO input space, e.g. 640x640.
-    // The postprocess mask is already bbox-cropped, so scanning outside
-    // this region only wastes time.
-    //
-    // xEnd/yEnd are exclusive.
-    // ------------------------------------------------------------
-    float boxX1 = min(det.x1, det.x2) * (float)maskWidth / max(inputWidth, 1.0f);
-    float boxY1 = min(det.y1, det.y2) * (float)maskHeight / max(inputHeight, 1.0f);
-    float boxX2 = max(det.x1, det.x2) * (float)maskWidth / max(inputWidth, 1.0f);
-    float boxY2 = max(det.y1, det.y2) * (float)maskHeight / max(inputHeight, 1.0f);
-
-    uint xStart = (uint)floor(clamp(boxX1, 0.0f, (float)maskWidth));
-    uint yStart = (uint)floor(clamp(boxY1, 0.0f, (float)maskHeight));
-    uint xEnd = (uint)ceil(clamp(boxX2, 0.0f, (float)maskWidth));
-    uint yEnd = (uint)ceil(clamp(boxY2, 0.0f, (float)maskHeight));
-
-    // Keep at least one pixel when bbox is extremely thin after scaling.
-    if (xEnd <= xStart)
-    {
-        xEnd = min(xStart + 1u, maskWidth);
-    }
-    if (yEnd <= yStart)
-    {
-        yEnd = min(yStart + 1u, maskHeight);
-    }
-
-    if (xStart >= maskWidth || yStart >= maskHeight || xEnd <= xStart || yEnd <= yStart)
-    {
-        WriteInvalid(detIndex, FAILURE_INVALID_END_REGION);
-        return;
-    }
-
     float count = 0.0f;
     float sumX = 0.0f;
     float sumY = 0.0f;
@@ -622,10 +588,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Pass A: moments
     // ------------------------------------------------------------
     [loop]
-    for (uint y = yStart; y < yEnd; ++y)
+    for (uint y = 0; y < maskHeight; ++y)
     {
         [loop]
-        for (uint x = xStart; x < xEnd; ++x)
+        for (uint x = 0; x < maskWidth; ++x)
         {
             uint idx = y * maskWidth + x;
             float m = ReadMask(detIndex, idx);
@@ -685,10 +651,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     float maxProj = -1e30f;
 
     [loop]
-    for (uint y2 = yStart; y2 < yEnd; ++y2)
+    for (uint y2 = 0; y2 < maskHeight; ++y2)
     {
         [loop]
-        for (uint x2 = xStart; x2 < xEnd; ++x2)
+        for (uint x2 = 0; x2 < maskWidth; ++x2)
         {
             uint idx2 = y2 * maskWidth + x2;
             float m2 = ReadMask(detIndex, idx2);
@@ -736,10 +702,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     float maxSidePerpMax = -1e30f;
 
     [loop]
-    for (uint y3 = yStart; y3 < yEnd; ++y3)
+    for (uint y3 = 0; y3 < maskHeight; ++y3)
     {
         [loop]
-        for (uint x3 = xStart; x3 < xEnd; ++x3)
+        for (uint x3 = 0; x3 < maskWidth; ++x3)
         {
             uint idx3 = y3 * maskWidth + x3;
             float m3 = ReadMask(detIndex, idx3);
@@ -793,11 +759,11 @@ R"(
     // ------------------------------------------------------------
     // Pass D: choose endpoint candidates from actual binary-mask pixels.
     //
-    // Prefer the most outward pixel along the principal axis.
-    // If multiple pixels are similarly outward, choose the one closest
-    // to the center of that end region in the normal direction.
-    // This keeps each candidate on mask==1 while avoiding the inward
-    // shift caused by selecting the centroid of the end region.
+    // Previous version selected the mask pixel closest to the centroid
+    // of each end region, which tends to move the candidate inward.
+    // This version prefers the most outward pixel along the principal
+    // axis. If multiple pixels are similarly outward, it chooses the one
+    // closest to the center of that end region in the normal direction.
     // ------------------------------------------------------------
 
     float minSidePerpCenter =
@@ -824,10 +790,10 @@ R"(
     float projEps = 0.75f;
 
     [loop]
-    for (uint y4 = yStart; y4 < yEnd; ++y4)
+    for (uint y4 = 0; y4 < maskHeight; ++y4)
     {
         [loop]
-        for (uint x4 = xStart; x4 < xEnd; ++x4)
+        for (uint x4 = 0; x4 < maskWidth; ++x4)
         {
             uint idx4 = y4 * maskWidth + x4;
             float m4 = ReadMask(detIndex, idx4);

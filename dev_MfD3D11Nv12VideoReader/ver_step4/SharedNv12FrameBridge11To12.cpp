@@ -36,6 +36,43 @@ SharedNv12FrameBridge11To12::SharedNv12FrameBridge11To12(
     this->create_d3d11_copy_done_query();
 }
 
+
+SharedNv12FrameBridge11To12::ScopedD3D11ReadAccess::ScopedD3D11ReadAccess(
+    SharedNv12FrameBridge11To12& bridge
+)
+    : bridge_(&bridge)
+{
+    this->bridge_->acquire_for_d3d11_read();
+}
+
+SharedNv12FrameBridge11To12::ScopedD3D11ReadAccess::~ScopedD3D11ReadAccess()
+{
+    if (!this->bridge_) {
+        return;
+    }
+
+    try {
+        this->bridge_->release_from_d3d11_read();
+    } catch (...) {
+        // Destructors must not throw. In debug-save paths, a release failure
+        // will normally be accompanied by a later synchronization/device error.
+    }
+}
+
+SharedNv12FrameBridge11To12::ScopedD3D11ReadAccess::ScopedD3D11ReadAccess(
+    ScopedD3D11ReadAccess&& other
+) noexcept
+    : bridge_(other.bridge_)
+{
+    other.bridge_ = nullptr;
+}
+
+SharedNv12FrameBridge11To12::ScopedD3D11ReadAccess
+SharedNv12FrameBridge11To12::acquire_for_d3d11_read_guard()
+{
+    return ScopedD3D11ReadAccess(*this);
+}
+
 void SharedNv12FrameBridge11To12::copy_from_d3d11_frame_and_wait(
     ID3D11Texture2D* src_texture,
     UINT src_subresource_index
@@ -134,19 +171,23 @@ ID3D12Resource* SharedNv12FrameBridge11To12::d3d12_nv12_texture() const
 
 void SharedNv12FrameBridge11To12::acquire_for_d3d11_read()
 {
+    // After D3D12 read finishes, release_from_d3d12_read_guard() releases key 0.
+    // A D3D11-side debug read must therefore acquire key 0, not key 1.
     HRESULT hr = this->keyed_mutex_11_->AcquireSync(
-        1,
+        0,
         INFINITE
     );
 
     win_util::ThrowIfFailed(
         hr,
-        "SharedNv12FrameBridge11To12::acquire_for_d3d11_read: AcquireSync(1) failed"
+        "SharedNv12FrameBridge11To12::acquire_for_d3d11_read: AcquireSync(0) failed"
     );
 }
 
 void SharedNv12FrameBridge11To12::release_from_d3d11_read()
 {
+    // This is read-only access from the D3D11 side, so return ownership to key 0.
+    // The next D3D11 copy_from_d3d11_frame_and_wait() also acquires key 0.
     HRESULT hr = this->keyed_mutex_11_->ReleaseSync(
         0
     );

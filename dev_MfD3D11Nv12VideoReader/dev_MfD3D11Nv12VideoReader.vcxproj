@@ -145,6 +145,7 @@
     <ClCompile Include="TensorDebugSaverD3D12.cpp" />
     <ClCompile Include="TensorReadbackD3D12.cpp" />
     <ClCompile Include="ToolTipDetectorD3D12.cpp" />
+    <ClCompile Include="ToolTipPipelineD3D12.cpp" />
     <ClCompile Include="YoloSegPostProcessorD3D12.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -162,6 +163,7 @@
     <ClInclude Include="TensorDebugSaverD3D12.hpp" />
     <ClInclude Include="TensorReadbackD3D12.hpp" />
     <ClInclude Include="ToolTipDetectorD3D12.hpp" />
+    <ClInclude Include="ToolTipPipelineD3D12.hpp" />
     <ClInclude Include="util.hpp" />
     <ClInclude Include="YoloSegPostProcessorD3D12.hpp" />
   </ItemGroup>
