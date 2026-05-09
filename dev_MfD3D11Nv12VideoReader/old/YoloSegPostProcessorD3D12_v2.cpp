@@ -176,37 +176,6 @@ void YoloSegPostProcessorD3D12::process_uploaded_outputs_and_wait()
     this->d3d12_core_.close_execute_and_wait();
 }
 
-void YoloSegPostProcessorD3D12::process_external_outputs_and_wait(
-    ID3D12Resource* external_output0_buffer,
-    D3D12_RESOURCE_STATES& external_output0_state,
-    ID3D12Resource* external_output1_buffer,
-    D3D12_RESOURCE_STATES& external_output1_state
-)
-{
-    if (!external_output0_buffer || !external_output1_buffer) {
-        throw std::runtime_error(
-            "YoloSegPostProcessorD3D12::process_external_outputs_and_wait: external output buffer is null"
-        );
-    }
-
-    this->create_output_input_descriptors(
-        external_output0_buffer,
-        external_output1_buffer
-    );
-
-    this->d3d12_core_.reset_command_list();
-
-    this->record_process_external(
-        this->d3d12_core_.command_list(),
-        external_output0_buffer,
-        external_output0_state,
-        external_output1_buffer,
-        external_output1_state
-    );
-
-    this->d3d12_core_.close_execute_and_wait();
-}
-
 std::vector<YoloSegPostProcessorD3D12::DetectionWithMask>
 YoloSegPostProcessorD3D12::readback_results()
 {
@@ -1119,65 +1088,6 @@ void YoloSegPostProcessorD3D12::create_buffers()
     );
 }
 
-void YoloSegPostProcessorD3D12::create_output_input_descriptors(
-    ID3D12Resource* output0_buffer,
-    ID3D12Resource* output1_buffer
-)
-{
-    if (!output0_buffer || !output1_buffer) {
-        throw std::runtime_error("create_output_input_descriptors: output buffer is null");
-    }
-
-    const UINT mask_pixels =
-        this->config_.mask_width * this->config_.mask_height;
-
-    D3D12_CPU_DESCRIPTOR_HANDLE base_cpu =
-        this->descriptor_heap_->GetCPUDescriptorHandleForHeapStart();
-
-    auto handle_at = [&](UINT index) {
-        D3D12_CPU_DESCRIPTOR_HANDLE h = base_cpu;
-        h.ptr += static_cast<SIZE_T>(index) * this->descriptor_size_;
-        return h;
-    };
-
-    auto create_structured_srv = [&](
-        ID3D12Resource* res,
-        UINT num_elements,
-        UINT stride,
-        UINT slot
-    ) {
-        D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-        desc.Shader4ComponentMapping =
-            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        desc.Format = DXGI_FORMAT_UNKNOWN;
-        desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        desc.Buffer.FirstElement = 0;
-        desc.Buffer.NumElements = num_elements;
-        desc.Buffer.StructureByteStride = stride;
-        desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-
-        this->d3d12_core_.device()->CreateShaderResourceView(
-            res,
-            &desc,
-            handle_at(slot)
-        );
-    };
-
-    create_structured_srv(
-        output0_buffer,
-        this->config_.num_attrs * this->config_.num_candidates,
-        sizeof(float),
-        SRV_OUTPUT0
-    );
-
-    create_structured_srv(
-        output1_buffer,
-        this->config_.num_mask_coeffs * mask_pixels,
-        sizeof(float),
-        SRV_OUTPUT1
-    );
-}
-
 void YoloSegPostProcessorD3D12::create_descriptors()
 {
     auto cpu_base =
@@ -1187,68 +1097,74 @@ void YoloSegPostProcessorD3D12::create_descriptors()
         D3D12_CPU_DESCRIPTOR_HANDLE h = cpu_base;
         h.ptr += static_cast<SIZE_T>(index) * this->descriptor_size_;
         return h;
-    };
+        };
 
     auto create_structured_srv = [&](
         ID3D12Resource* res,
         UINT num_elements,
         UINT stride,
         UINT slot
-    ) {
-        D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-        desc.Shader4ComponentMapping =
-            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        desc.Format = DXGI_FORMAT_UNKNOWN;
-        desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        desc.Buffer.FirstElement = 0;
-        desc.Buffer.NumElements = num_elements;
-        desc.Buffer.StructureByteStride = stride;
-        desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+        ) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+            desc.Shader4ComponentMapping =
+                D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            desc.Format = DXGI_FORMAT_UNKNOWN;
+            desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            desc.Buffer.FirstElement = 0;
+            desc.Buffer.NumElements = num_elements;
+            desc.Buffer.StructureByteStride = stride;
+            desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
 
-        this->d3d12_core_.device()->CreateShaderResourceView(
-            res,
-            &desc,
-            handle_at(slot)
-        );
-    };
+            this->d3d12_core_.device()->CreateShaderResourceView(
+                res,
+                &desc,
+                handle_at(slot)
+            );
+        };
 
     auto create_structured_uav = [&](
         ID3D12Resource* res,
         UINT num_elements,
         UINT stride,
         UINT slot
-    ) {
-        D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
-        desc.Format = DXGI_FORMAT_UNKNOWN;
-        desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-        desc.Buffer.FirstElement = 0;
-        desc.Buffer.NumElements = num_elements;
-        desc.Buffer.StructureByteStride = stride;
-        desc.Buffer.CounterOffsetInBytes = 0;
-        desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+        ) {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
+            desc.Format = DXGI_FORMAT_UNKNOWN;
+            desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+            desc.Buffer.FirstElement = 0;
+            desc.Buffer.NumElements = num_elements;
+            desc.Buffer.StructureByteStride = stride;
+            desc.Buffer.CounterOffsetInBytes = 0;
+            desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
 
-        this->d3d12_core_.device()->CreateUnorderedAccessView(
-            res,
-            nullptr,
-            &desc,
-            handle_at(slot)
-        );
-    };
+            this->d3d12_core_.device()->CreateUnorderedAccessView(
+                res,
+                nullptr,
+                &desc,
+                handle_at(slot)
+            );
+        };
 
     const UINT mask_pixels =
-        this->config_.mask_width * this->config_.mask_height;
+        config_.mask_width * config_.mask_height;
 
-    // Initial SRV for the current debug path: CPU upload -> internal output buffers.
-    // process_external_outputs_and_wait() overwrites only these two descriptors
-    // with external GPU output buffers.
-    this->create_output_input_descriptors(
+    create_structured_srv(
         this->output0_buffer_.Get(),
-        this->output1_buffer_.Get()
+        config_.num_attrs * config_.num_candidates,
+        sizeof(float),
+        SRV_OUTPUT0
+    );
+
+    create_structured_srv(
+        this->output1_buffer_.Get(),
+        config_.num_mask_coeffs * mask_pixels,
+        sizeof(float),
+        SRV_OUTPUT1
     );
 
     create_structured_srv(
         this->candidate_buffer_.Get(),
-        this->config_.max_candidates,
+        config_.max_candidates,
         sizeof(Detection),
         SRV_CANDIDATES
     );
@@ -1262,14 +1178,14 @@ void YoloSegPostProcessorD3D12::create_descriptors()
 
     create_structured_srv(
         this->keep_flag_buffer_.Get(),
-        this->config_.max_candidates,
+        config_.max_candidates,
         sizeof(uint32_t),
         SRV_KEEP_FLAGS
     );
 
     create_structured_srv(
         this->selected_detection_buffer_.Get(),
-        this->config_.max_detections,
+        config_.max_detections,
         sizeof(Detection),
         SRV_SELECTED
     );
@@ -1283,7 +1199,7 @@ void YoloSegPostProcessorD3D12::create_descriptors()
 
     create_structured_uav(
         this->candidate_buffer_.Get(),
-        this->config_.max_candidates,
+        config_.max_candidates,
         sizeof(Detection),
         UAV_CANDIDATES
     );
@@ -1297,14 +1213,14 @@ void YoloSegPostProcessorD3D12::create_descriptors()
 
     create_structured_uav(
         this->keep_flag_buffer_.Get(),
-        this->config_.max_candidates,
+        config_.max_candidates,
         sizeof(uint32_t),
         UAV_KEEP_FLAGS
     );
 
     create_structured_uav(
         this->selected_detection_buffer_.Get(),
-        this->config_.max_detections,
+        config_.max_detections,
         sizeof(Detection),
         UAV_SELECTED
     );
@@ -1318,7 +1234,7 @@ void YoloSegPostProcessorD3D12::create_descriptors()
 
     create_structured_uav(
         this->selected_mask_buffer_.Get(),
-        this->config_.max_detections * mask_pixels,
+        config_.max_detections * mask_pixels,
         sizeof(float),
         UAV_SELECTED_MASKS
     );
@@ -1497,45 +1413,21 @@ void YoloSegPostProcessorD3D12::record_process(
     ID3D12GraphicsCommandList* command_list
 )
 {
-    this->record_process_external(
-        command_list,
-        this->output0_buffer_.Get(),
-        this->output0_state_,
-        this->output1_buffer_.Get(),
-        this->output1_state_
-    );
-}
-
-void YoloSegPostProcessorD3D12::record_process_external(
-    ID3D12GraphicsCommandList* command_list,
-    ID3D12Resource* output0_buffer,
-    D3D12_RESOURCE_STATES& output0_state,
-    ID3D12Resource* output1_buffer,
-    D3D12_RESOURCE_STATES& output1_state
-)
-{
-    if (!command_list) {
-        throw std::runtime_error("record_process_external: command_list is null");
-    }
-    if (!output0_buffer || !output1_buffer) {
-        throw std::runtime_error("record_process_external: output buffer is null");
-    }
-
     this->update_params();
 
     this->reset_counters(command_list);
 
     this->transition_resource(
         command_list,
-        output0_buffer,
-        output0_state,
+        this->output0_buffer_.Get(),
+        this->output0_state_,
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
     );
 
     this->transition_resource(
         command_list,
-        output1_buffer,
-        output1_state,
+        this->output1_buffer_.Get(),
+        this->output1_state_,
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
     );
 
@@ -1625,13 +1517,13 @@ void YoloSegPostProcessorD3D12::record_process_external(
     uav_barrier.UAV.pResource = nullptr;
 
     const UINT decode_groups =
-        (this->config_.num_candidates + 255) / 256;
+        (config_.num_candidates + 255) / 256;
 
     const UINT nms_groups =
-        (this->config_.max_candidates + 255) / 256;
+        (config_.max_candidates + 255) / 256;
 
     const UINT mask_pixels =
-        this->config_.mask_width * this->config_.mask_height;
+        config_.mask_width * config_.mask_height;
 
     const UINT mask_groups_x =
         (mask_pixels + 255) / 256;
@@ -1754,7 +1646,7 @@ void YoloSegPostProcessorD3D12::record_process_external(
 
     command_list->Dispatch(
         mask_groups_x,
-        this->config_.max_detections,
+        config_.max_detections,
         1
     );
 
@@ -1803,4 +1695,63 @@ void YoloSegPostProcessorD3D12::transition_resource(
 UINT YoloSegPostProcessorD3D12::align256(UINT value)
 {
     return (value + 255u) & ~255u;
+}
+
+void YoloSegPostProcessorD3D12::create_output_input_descriptors(
+    ID3D12Resource* output0_buffer,
+    ID3D12Resource* output1_buffer
+)
+{
+    if (!output0_buffer || !output1_buffer) {
+        throw std::runtime_error("create_output_input_descriptors: output buffer is null");
+    }
+
+    const UINT mask_pixels =
+        this->config_.mask_width * this->config_.mask_height;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE base_cpu =
+        this->descriptor_heap_->GetCPUDescriptorHandleForHeapStart();
+
+    auto handle_at = [&](UINT index) {
+        D3D12_CPU_DESCRIPTOR_HANDLE h = base_cpu;
+        h.ptr += static_cast<SIZE_T>(index) * this->descriptor_size_;
+        return h;
+    };
+
+    auto create_structured_srv = [&](
+        ID3D12Resource* res,
+        UINT num_elements,
+        UINT stride,
+        UINT slot
+    ) {
+        D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+        desc.Shader4ComponentMapping =
+            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        desc.Format = DXGI_FORMAT_UNKNOWN;
+        desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        desc.Buffer.FirstElement = 0;
+        desc.Buffer.NumElements = num_elements;
+        desc.Buffer.StructureByteStride = stride;
+        desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+        this->d3d12_core_.device()->CreateShaderResourceView(
+            res,
+            &desc,
+            handle_at(slot)
+        );
+    };
+
+    create_structured_srv(
+        output0_buffer,
+        this->config_.num_attrs * this->config_.num_candidates,
+        sizeof(float),
+        SRV_OUTPUT0
+    );
+
+    create_structured_srv(
+        output1_buffer,
+        this->config_.num_mask_coeffs * mask_pixels,
+        sizeof(float),
+        SRV_OUTPUT1
+    );
 }

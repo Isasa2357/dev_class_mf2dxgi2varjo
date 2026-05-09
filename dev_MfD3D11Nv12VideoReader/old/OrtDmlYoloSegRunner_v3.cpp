@@ -9,7 +9,10 @@
 #include "HResultUtil.hpp"
 
 OrtDmlYoloSegRunner::OrtDmlYoloSegRunner()
-    : env_(ORT_LOGGING_LEVEL_WARNING, "OrtDmlYoloSegRunner")
+    : env_(
+        ORT_LOGGING_LEVEL_WARNING,
+        "OrtDmlYoloSegRunner"
+    )
 {
 }
 
@@ -19,107 +22,45 @@ void OrtDmlYoloSegRunner::initialize(
     int dml_device_id
 )
 {
-    this->initialize_impl(
-        model_path,
-        use_directml,
-        dml_device_id,
-        false
-    );
-}
-
-void OrtDmlYoloSegRunner::initialize_with_d3d12(
-    D3D12Core& d3d12_core,
-    const wchar_t* model_path
-)
-{
-    this->set_d3d12_core(d3d12_core);
-
-    this->initialize_impl(
-        model_path,
-        true,
-        0,
-        true
-    );
-}
-
-void OrtDmlYoloSegRunner::initialize_impl(
-    const wchar_t* model_path,
-    bool use_directml,
-    int dml_device_id,
-    bool use_dml1_with_d3d12
-)
-{
     if (!model_path) {
         throw std::runtime_error("OrtDmlYoloSegRunner::initialize: model_path is null");
     }
 
-    if (use_dml1_with_d3d12 && !this->d3d12_core_) {
-        throw std::runtime_error("OrtDmlYoloSegRunner::initialize_with_d3d12: D3D12Core is not set");
-    }
-
     session_options_ = Ort::SessionOptions{};
 
+    // 最初はデバッグしやすい設定。
+    // DirectML EP 使用時は、必要に応じて ORT_SEQUENTIAL の方が安全な場合があります。
     session_options_.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_ENABLE_EXTENDED
     );
 
     session_options_.SetIntraOpNumThreads(1);
 
-    // DirectML EP does not benefit from ORT parallel execution here and memory
-    // pattern can interfere with externally bound outputs. Keep this explicit.
-    session_options_.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
-    session_options_.DisableMemPattern();
-
-    dml_api_ = nullptr;
-    dml_device_.Reset();
-    dml1_io_binding_enabled_ = false;
-
     if (use_directml) {
+        // Microsoft.ML.OnnxRuntime.DirectML NuGet 等を使う場合、
+        // dml_provider_factory.h と onnxruntime_providers_dml.lib が必要です。
         const OrtApi& ort_api = Ort::GetApi();
+
+        const OrtDmlApi* dml_api = nullptr;
 
         Ort::ThrowOnError(
             ort_api.GetExecutionProviderApi(
                 "DML",
                 ORT_API_VERSION,
-                reinterpret_cast<const void**>(&dml_api_)
+                reinterpret_cast<const void**>(&dml_api)
             )
         );
 
-        if (!dml_api_) {
+        if (!dml_api) {
             throw std::runtime_error("Failed to get OrtDmlApi");
         }
 
-        if (use_dml1_with_d3d12) {
-            HRESULT hr = DMLCreateDevice1(
-                this->d3d12_core_->device(),
-                DML_CREATE_DEVICE_FLAG_NONE,
-                DML_FEATURE_LEVEL_1_0,
-                IID_PPV_ARGS(this->dml_device_.GetAddressOf())
-            );
-
-            win_util::ThrowIfFailed(
-                hr,
-                "DMLCreateDevice1 failed"
-            );
-
-            Ort::ThrowOnError(
-                dml_api_->SessionOptionsAppendExecutionProvider_DML1(
-                    session_options_,
-                    this->dml_device_.Get(),
-                    this->d3d12_core_->command_queue()
-                )
-            );
-
-            dml1_io_binding_enabled_ = true;
-        }
-        else {
-            Ort::ThrowOnError(
-                dml_api_->SessionOptionsAppendExecutionProvider_DML(
-                    session_options_,
-                    dml_device_id
-                )
-            );
-        }
+        Ort::ThrowOnError(
+            dml_api->SessionOptionsAppendExecutionProvider_DML(
+                session_options_,
+                dml_device_id
+            )
+        );
     }
 
     session_ = std::make_unique<Ort::Session>(
@@ -131,10 +72,6 @@ void OrtDmlYoloSegRunner::initialize_impl(
     collect_model_io_info();
 
     initialized_ = true;
-
-    if (dml1_io_binding_enabled_) {
-        this->ensure_gpu_output_buffers_from_model_info();
-    }
 }
 
 void OrtDmlYoloSegRunner::set_d3d12_core(
@@ -202,6 +139,8 @@ OrtDmlYoloSegRunner::run_cpu_input(
             OrtMemTypeDefault
         );
 
+    // CreateTensor は input_tensor のメモリを参照するため、
+    // session.Run が終わるまで input_tensor は生存している必要があります。
     Ort::Value input_value =
         Ort::Value::CreateTensor<float>(
             memory_info,
@@ -306,6 +245,7 @@ OrtDmlYoloSegRunner::run_cpu_input_and_upload_outputs(
     return outputs;
 }
 
+
 std::vector<OrtDmlYoloSegRunner::OutputTensor>
 OrtDmlYoloSegRunner::run_d3d12_input_and_upload_outputs(
     ID3D12Resource* input_buffer,
@@ -318,7 +258,7 @@ OrtDmlYoloSegRunner::run_d3d12_input_and_upload_outputs(
 {
     if (!this->d3d12_core_) {
         throw std::runtime_error(
-            "OrtDmlYoloSegRunner::run_d3d12_input_and_upload_outputs: D3D12Core is not set"
+            "OrtDmlYoloSegRunner::run_d3d12_input_and_upload_outputs: D3D12Core is not set. Call set_d3d12_core(d3d12) first."
         );
     }
 
@@ -334,28 +274,16 @@ OrtDmlYoloSegRunner::run_d3d12_input_and_upload_outputs(
         );
     }
 
-    const std::vector<int64_t> input_shape = {
-        batch,
-        channels,
-        height,
-        width
-    };
-
-    if (this->dml1_io_binding_enabled_) {
-        return this->run_d3d12_input_with_iobinding(
-            input_buffer,
-            input_buffer_state,
-            input_shape
-        );
-    }
-
-    // Fallback path for legacy initialize(). This is intentionally slower.
     const size_t expected_elements =
         static_cast<size_t>(batch) *
         static_cast<size_t>(channels) *
         static_cast<size_t>(height) *
         static_cast<size_t>(width);
 
+    // For the current transitional implementation, restore to UAV because the
+    // Nv12YoloPreprocessorD3D12 output tensor is normally reused as UAV on the
+    // next frame. If the caller uses another producer, pass a compatible state
+    // by editing this restore_state policy later.
     std::vector<float> input_tensor =
         this->readback_d3d12_float_buffer(
             input_buffer,
@@ -371,227 +299,6 @@ OrtDmlYoloSegRunner::run_d3d12_input_and_upload_outputs(
         height,
         width
     );
-}
-
-std::vector<OrtDmlYoloSegRunner::OutputTensor>
-OrtDmlYoloSegRunner::run_d3d12_input_with_iobinding(
-    ID3D12Resource* input_buffer,
-    D3D12_RESOURCE_STATES& input_buffer_state,
-    const std::vector<int64_t>& input_shape
-)
-{
-    if (!initialized_ || !session_) {
-        throw std::runtime_error("OrtDmlYoloSegRunner is not initialized");
-    }
-
-    if (!dml_api_) {
-        throw std::runtime_error("OrtDmlYoloSegRunner: DML API is not available");
-    }
-
-    if (input_infos_.empty() || output_infos_.empty()) {
-        throw std::runtime_error("OrtDmlYoloSegRunner: model IO info is empty");
-    }
-
-    if (input_infos_[0].element_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-        throw std::runtime_error("First model input is not float32");
-    }
-
-    const size_t input_elements =
-        element_count_from_shape(input_shape);
-
-    if (input_elements == 0) {
-        throw std::runtime_error("run_d3d12_input_with_iobinding: invalid input element count");
-    }
-
-    const size_t input_byte_size =
-        input_elements * sizeof(float);
-
-    const D3D12_RESOURCE_DESC input_desc =
-        input_buffer->GetDesc();
-
-    if (input_desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER) {
-        throw std::runtime_error("run_d3d12_input_with_iobinding: input resource is not a buffer");
-    }
-
-    if (input_desc.Width < input_byte_size) {
-        std::stringstream ss;
-        ss << "run_d3d12_input_with_iobinding: input buffer too small. required="
-           << input_byte_size
-           << " actual="
-           << input_desc.Width;
-        throw std::runtime_error(ss.str());
-    }
-
-    this->ensure_gpu_output_buffers_from_model_info();
-
-    // DirectML EP owns D3D12 work on the same command queue. Use COMMON as the
-    // handoff state for external resources. After Run, keep state tracking as
-    // COMMON so downstream postprocess can transition from COMMON to SRV.
-    this->transition_resource_and_wait(
-        input_buffer,
-        input_buffer_state,
-        D3D12_RESOURCE_STATE_COMMON
-    );
-
-    for (auto& out : this->gpu_outputs_) {
-        this->transition_resource_and_wait(
-            out.default_buffer.Get(),
-            out.state,
-            D3D12_RESOURCE_STATE_COMMON
-        );
-    }
-
-    void* input_dml_allocation = nullptr;
-    Ort::Value input_value =
-        this->create_dml_tensor_from_d3d12_resource(
-            input_buffer,
-            input_byte_size,
-            input_shape,
-            &input_dml_allocation
-        );
-
-    std::vector<void*> output_dml_allocations(
-        this->gpu_outputs_.size(),
-        nullptr
-    );
-
-    std::vector<Ort::Value> output_values;
-    output_values.reserve(this->gpu_outputs_.size());
-
-    try {
-        for (size_t i = 0; i < this->gpu_outputs_.size(); ++i) {
-            output_values.emplace_back(
-                this->create_dml_tensor_from_d3d12_resource(
-                    this->gpu_outputs_[i].default_buffer.Get(),
-                    this->gpu_outputs_[i].byte_size,
-                    this->gpu_outputs_[i].shape,
-                    &output_dml_allocations[i]
-                )
-            );
-        }
-
-        Ort::IoBinding binding(*session_);
-
-        binding.BindInput(
-            this->input_names_[0].c_str(),
-            input_value
-        );
-
-        for (size_t i = 0; i < output_values.size(); ++i) {
-            binding.BindOutput(
-                this->output_names_[i].c_str(),
-                output_values[i]
-            );
-        }
-
-        binding.SynchronizeInputs();
-
-        session_->Run(
-            Ort::RunOptions{ nullptr },
-            binding
-        );
-
-        binding.SynchronizeOutputs();
-    }
-    catch (...) {
-        for (void* p : output_dml_allocations) {
-            this->free_dml_allocation(p);
-        }
-        this->free_dml_allocation(input_dml_allocation);
-        throw;
-    }
-
-    for (void* p : output_dml_allocations) {
-        this->free_dml_allocation(p);
-    }
-    this->free_dml_allocation(input_dml_allocation);
-
-    input_buffer_state = D3D12_RESOURCE_STATE_COMMON;
-    for (auto& out : this->gpu_outputs_) {
-        out.state = D3D12_RESOURCE_STATE_COMMON;
-    }
-
-    std::vector<OutputTensor> metadata;
-    metadata.reserve(this->gpu_outputs_.size());
-
-    for (size_t i = 0; i < this->gpu_outputs_.size(); ++i) {
-        OutputTensor out{};
-        out.name = this->output_names_[i];
-        out.shape = this->gpu_outputs_[i].shape;
-        // Intentionally empty. Do not read back GPU outputs here.
-        metadata.emplace_back(std::move(out));
-    }
-
-    return metadata;
-}
-
-Ort::Value OrtDmlYoloSegRunner::create_dml_tensor_from_d3d12_resource(
-    ID3D12Resource* resource,
-    size_t byte_size,
-    const std::vector<int64_t>& shape,
-    void** out_dml_allocation
-)
-{
-    if (!resource) {
-        throw std::runtime_error("create_dml_tensor_from_d3d12_resource: resource is null");
-    }
-
-    if (!out_dml_allocation) {
-        throw std::runtime_error("create_dml_tensor_from_d3d12_resource: out_dml_allocation is null");
-    }
-
-    if (!dml_api_) {
-        throw std::runtime_error("create_dml_tensor_from_d3d12_resource: DML API is not available");
-    }
-
-    *out_dml_allocation = nullptr;
-
-    Ort::ThrowOnError(
-        dml_api_->CreateGPUAllocationFromD3DResource(
-            resource,
-            out_dml_allocation
-        )
-    );
-
-    if (!*out_dml_allocation) {
-        throw std::runtime_error("CreateGPUAllocationFromD3DResource returned null allocation");
-    }
-
-    Ort::MemoryInfo memory_info(
-        "DML",
-        OrtAllocatorType::OrtDeviceAllocator,
-        0,
-        OrtMemTypeDefault
-    );
-
-    OrtValue* raw_value = nullptr;
-
-    Ort::ThrowOnError(
-        Ort::GetApi().CreateTensorWithDataAsOrtValue(
-            memory_info,
-            *out_dml_allocation,
-            byte_size,
-            shape.data(),
-            shape.size(),
-            ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-            &raw_value
-        )
-    );
-
-    if (!raw_value) {
-        throw std::runtime_error("CreateTensorWithDataAsOrtValue returned null OrtValue");
-    }
-
-    return Ort::Value(raw_value);
-}
-
-void OrtDmlYoloSegRunner::free_dml_allocation(void* allocation) noexcept
-{
-    if (!allocation || !dml_api_) {
-        return;
-    }
-
-    dml_api_->FreeGPUAllocation(allocation);
 }
 
 void OrtDmlYoloSegRunner::upload_outputs_to_d3d12(
@@ -663,11 +370,6 @@ const std::vector<OrtDmlYoloSegRunner::TensorInfo>&
 OrtDmlYoloSegRunner::output_infos() const
 {
     return output_infos_;
-}
-
-bool OrtDmlYoloSegRunner::is_dml1_io_binding_enabled() const
-{
-    return this->dml1_io_binding_enabled_;
 }
 
 size_t OrtDmlYoloSegRunner::gpu_output_count() const
@@ -846,6 +548,7 @@ size_t OrtDmlYoloSegRunner::element_count_from_shape(
     return count;
 }
 
+
 std::vector<float> OrtDmlYoloSegRunner::readback_d3d12_float_buffer(
     ID3D12Resource* buffer,
     D3D12_RESOURCE_STATES& buffer_state,
@@ -1006,10 +709,7 @@ void OrtDmlYoloSegRunner::ensure_gpu_output_buffer(
         this->d3d12_core_->create_committed_resource(
             default_heap,
             D3D12_HEAP_FLAG_NONE,
-            make_buffer_desc(
-                static_cast<UINT64>(byte_size),
-                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
-            ),
+            make_buffer_desc(static_cast<UINT64>(byte_size)),
             D3D12_RESOURCE_STATE_COMMON,
             nullptr
         );
@@ -1027,48 +727,6 @@ void OrtDmlYoloSegRunner::ensure_gpu_output_buffer(
     gpu_output.shape = shape;
     gpu_output.element_count = element_count;
     gpu_output.byte_size = byte_size;
-}
-
-void OrtDmlYoloSegRunner::ensure_gpu_output_buffers_from_model_info()
-{
-    if (this->output_infos_.empty()) {
-        throw std::runtime_error("ensure_gpu_output_buffers_from_model_info: model has no outputs");
-    }
-
-    if (this->gpu_outputs_.size() < this->output_infos_.size()) {
-        this->gpu_outputs_.resize(this->output_infos_.size());
-    }
-
-    for (size_t i = 0; i < this->output_infos_.size(); ++i) {
-        const TensorInfo& info =
-            this->output_infos_[i];
-
-        if (info.element_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-            std::stringstream ss;
-            ss << "ensure_gpu_output_buffers_from_model_info: output "
-               << i
-               << " is not float32";
-            throw std::runtime_error(ss.str());
-        }
-
-        const size_t elements =
-            element_count_from_shape(info.shape);
-
-        if (elements == 0) {
-            std::stringstream ss;
-            ss << "ensure_gpu_output_buffers_from_model_info: output "
-               << i
-               << " has dynamic or invalid shape "
-               << shape_to_string(info.shape);
-            throw std::runtime_error(ss.str());
-        }
-
-        this->ensure_gpu_output_buffer(
-            i,
-            info.shape,
-            elements
-        );
-    }
 }
 
 void OrtDmlYoloSegRunner::upload_float_vector_to_gpu_output(
@@ -1193,32 +851,6 @@ void OrtDmlYoloSegRunner::transition_resource(
     );
 
     current_state = new_state;
-}
-
-void OrtDmlYoloSegRunner::transition_resource_and_wait(
-    ID3D12Resource* resource,
-    D3D12_RESOURCE_STATES& current_state,
-    D3D12_RESOURCE_STATES new_state
-)
-{
-    if (!this->d3d12_core_) {
-        throw std::runtime_error("transition_resource_and_wait: D3D12Core is not set");
-    }
-
-    if (current_state == new_state) {
-        return;
-    }
-
-    this->d3d12_core_->reset_command_list();
-
-    this->transition_resource(
-        this->d3d12_core_->command_list(),
-        resource,
-        current_state,
-        new_state
-    );
-
-    this->d3d12_core_->close_execute_and_wait();
 }
 
 D3D12_RESOURCE_DESC OrtDmlYoloSegRunner::make_buffer_desc(

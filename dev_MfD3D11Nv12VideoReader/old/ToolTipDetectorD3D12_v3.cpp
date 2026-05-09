@@ -712,40 +712,23 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float minWidth = max(0.0f, minSidePerpMax - minSidePerpMin);
     float maxWidth = max(0.0f, maxSidePerpMax - maxSidePerpMin);
-)"
-R"(
+
     // ------------------------------------------------------------
-    // Pass D: choose endpoint candidates from actual binary-mask pixels.
+    // Pass D: snap each endpoint candidate to an actual binary-mask pixel.
     //
-    // Previous version selected the mask pixel closest to the centroid
-    // of each end region, which tends to move the candidate inward.
-    // This version prefers the most outward pixel along the principal
-    // axis. If multiple pixels are similarly outward, it chooses the one
-    // closest to the center of that end region in the normal direction.
+    // The previous implementation used the arithmetic center of pixels in
+    // the end region. That point can lie on the principal axis or outside the
+    // binary mask. For tip detection, candidate points must be actual pixels
+    // whose mask value is 1. Here, for each end region, choose the mask pixel
+    // closest to that side's centroid.
     // ------------------------------------------------------------
-
-    float minSidePerpCenter =
-        0.5f * (minSidePerpMin + minSidePerpMax);
-
-    float maxSidePerpCenter =
-        0.5f * (maxSidePerpMin + maxSidePerpMax);
 
     float minPointX = minCenterX;
     float minPointY = minCenterY;
     float maxPointX = maxCenterX;
     float maxPointY = maxCenterY;
-
-    // For min side, smaller proj is better.
-    // For max side, larger proj is better.
-    float bestMinProj =  1e30f;
-    float bestMaxProj = -1e30f;
-
-    float bestMinPerpErr = 1e30f;
-    float bestMaxPerpErr = 1e30f;
-
-    // Tolerance in projection direction.
-    // If two points have almost same outwardness, use normal-center closeness.
-    float projEps = 0.75f;
+    float minBestDist = 1e30f;
+    float maxBestDist = 1e30f;
 
     [loop]
     for (uint y4 = 0; y4 < maskHeight; ++y4)
@@ -763,51 +746,31 @@ R"(
 
             float2 p4 = float2((float)x4 + 0.5f, (float)y4 + 0.5f);
             float2 q4 = p4 - float2(cx, cy);
-
             float proj4 = dot(q4, axis);
-            float perp4 = dot(q4, normal);
 
-            // --------------------------
-            // min side candidate
-            // --------------------------
             if (proj4 <= minProj + endRegion)
             {
-                float perpErr = abs(perp4 - minSidePerpCenter);
+                float dx = p4.x - minCenterX;
+                float dy = p4.y - minCenterY;
+                float dist2 = dx * dx + dy * dy;
 
-                bool betterProj =
-                    proj4 < bestMinProj - projEps;
-
-                bool sameProjButMoreCentered =
-                    abs(proj4 - bestMinProj) <= projEps &&
-                    perpErr < bestMinPerpErr;
-
-                if (betterProj || sameProjButMoreCentered)
+                if (dist2 < minBestDist)
                 {
-                    bestMinProj = proj4;
-                    bestMinPerpErr = perpErr;
+                    minBestDist = dist2;
                     minPointX = p4.x;
                     minPointY = p4.y;
                 }
             }
 
-            // --------------------------
-            // max side candidate
-            // --------------------------
             if (proj4 >= maxProj - endRegion)
             {
-                float perpErr2 = abs(perp4 - maxSidePerpCenter);
+                float dx2 = p4.x - maxCenterX;
+                float dy2 = p4.y - maxCenterY;
+                float dist22 = dx2 * dx2 + dy2 * dy2;
 
-                bool betterProj2 =
-                    proj4 > bestMaxProj + projEps;
-
-                bool sameProjButMoreCentered2 =
-                    abs(proj4 - bestMaxProj) <= projEps &&
-                    perpErr2 < bestMaxPerpErr;
-
-                if (betterProj2 || sameProjButMoreCentered2)
+                if (dist22 < maxBestDist)
                 {
-                    bestMaxProj = proj4;
-                    bestMaxPerpErr = perpErr2;
+                    maxBestDist = dist22;
                     maxPointX = p4.x;
                     maxPointY = p4.y;
                 }
@@ -815,7 +778,7 @@ R"(
         }
     }
 
-    if (bestMinProj > 1e29f || bestMaxProj < -1e29f)
+    if (minBestDist >= 1e29f || maxBestDist >= 1e29f)
     {
         WriteInvalid(detIndex, FAILURE_INVALID_END_REGION);
         return;
@@ -852,55 +815,24 @@ R"(
         candidate2Width = minWidth;
     }
 
-    // ------------------------------------------------------------
-    // Pass E: reject endpoint candidates near the ORIGINAL frame edge.
-    //
-    // Candidate coordinates are selected from mask==1 pixels in mask space.
-    // For edge rejection, convert each candidate to YOLO input space and then
-    // to original-frame space using the same letterbox inverse transform used
-    // for the final tip coordinate.
-    //
-    // edgeRejectRatio = 0.03 means:
-    //   x within 3% of originalWidth from left/right edge, or
-    //   y within 3% of originalHeight from top/bottom edge
-    // is rejected.
-    // ------------------------------------------------------------
-
-    float candidate1XInput = candidate1X * inputWidth / (float)maskWidth;
-    float candidate1YInput = candidate1Y * inputHeight / (float)maskHeight;
-    float candidate2XInput = candidate2X * inputWidth / (float)maskWidth;
-    float candidate2YInput = candidate2Y * inputHeight / (float)maskHeight;
-
-    float candidate1XOriginal = InputToOriginalX(candidate1XInput);
-    float candidate1YOriginal = InputToOriginalY(candidate1YInput);
-    float candidate2XOriginal = InputToOriginalX(candidate2XInput);
-    float candidate2YOriginal = InputToOriginalY(candidate2YInput);
-
-    float originalEdgeX = max(1.0f, edgeRejectRatio * max(originalWidth, 1.0f));
-    float originalEdgeY = max(1.0f, edgeRejectRatio * max(originalHeight, 1.0f));
-
-    float originalMaxX = max(0.0f, originalWidth - 1.0f);
-    float originalMaxY = max(0.0f, originalHeight - 1.0f);
+    float edgeX = max(1.0f, edgeRejectRatio * (float)maskWidth);
+    float edgeY = max(1.0f, edgeRejectRatio * (float)maskHeight);
 
     bool candidate1NearEdge =
-        candidate1XOriginal <= originalEdgeX ||
-        candidate1XOriginal >= (originalMaxX - originalEdgeX) ||
-        candidate1YOriginal <= originalEdgeY ||
-        candidate1YOriginal >= (originalMaxY - originalEdgeY);
+        candidate1X <= edgeX ||
+        candidate1X >= ((float)maskWidth - edgeX) ||
+        candidate1Y <= edgeY ||
+        candidate1Y >= ((float)maskHeight - edgeY);
 
     bool candidate2NearEdge =
-        candidate2XOriginal <= originalEdgeX ||
-        candidate2XOriginal >= (originalMaxX - originalEdgeX) ||
-        candidate2YOriginal <= originalEdgeY ||
-        candidate2YOriginal >= (originalMaxY - originalEdgeY);
+        candidate2X <= edgeX ||
+        candidate2X >= ((float)maskWidth - edgeX) ||
+        candidate2Y <= edgeY ||
+        candidate2Y >= ((float)maskHeight - edgeY);
 
     uint selectedCandidate = 1;
     float tipX = candidate1X;
     float tipY = candidate1Y;
-    float tipXInput = candidate1XInput;
-    float tipYInput = candidate1YInput;
-    float tipXOriginal = candidate1XOriginal;
-    float tipYOriginal = candidate1YOriginal;
 
     if (candidate1NearEdge)
     {
@@ -913,11 +845,13 @@ R"(
         selectedCandidate = 2;
         tipX = candidate2X;
         tipY = candidate2Y;
-        tipXInput = candidate2XInput;
-        tipYInput = candidate2YInput;
-        tipXOriginal = candidate2XOriginal;
-        tipYOriginal = candidate2YOriginal;
     }
+
+    float tipXInput = tipX * inputWidth / (float)maskWidth;
+    float tipYInput = tipY * inputHeight / (float)maskHeight;
+
+    float tipXOriginal = InputToOriginalX(tipXInput);
+    float tipYOriginal = InputToOriginalY(tipYInput);
 
     float thinnerWidth = min(candidate1Width, candidate2Width);
     float thickerWidth = max(candidate1Width, candidate2Width);
@@ -971,6 +905,7 @@ R"(
 
     g_results[detIndex] = outR;
 }
+
 )";
 
     Microsoft::WRL::ComPtr<ID3DBlob> cs_blob;

@@ -408,84 +408,6 @@ namespace {
         }
     }
 
-    void DrawCircleOutlineRgb(
-        std::vector<uint8_t>& rgb,
-        UINT width,
-        UINT height,
-        int cx,
-        int cy,
-        int radius,
-        uint8_t r,
-        uint8_t g,
-        uint8_t b,
-        int thickness
-    )
-    {
-        if (radius <= 0 || thickness <= 0) {
-            return;
-        }
-
-        const int outer_r = radius;
-        const int inner_r = std::max(0, radius - thickness);
-        const int outer_r2 = outer_r * outer_r;
-        const int inner_r2 = inner_r * inner_r;
-
-        for (int dy = -outer_r; dy <= outer_r; ++dy) {
-            for (int dx = -outer_r; dx <= outer_r; ++dx) {
-                const int d2 = dx * dx + dy * dy;
-                if (d2 <= outer_r2 && d2 >= inner_r2) {
-                    SetPixelRgb(
-                        rgb,
-                        width,
-                        height,
-                        cx + dx,
-                        cy + dy,
-                        r,
-                        g,
-                        b
-                    );
-                }
-            }
-        }
-    }
-
-    void DrawFilledCircleRgb(
-        std::vector<uint8_t>& rgb,
-        UINT width,
-        UINT height,
-        int cx,
-        int cy,
-        int radius,
-        uint8_t r,
-        uint8_t g,
-        uint8_t b
-    )
-    {
-        if (radius <= 0) {
-            return;
-        }
-
-        const int r2 = radius * radius;
-
-        for (int dy = -radius; dy <= radius; ++dy) {
-            for (int dx = -radius; dx <= radius; ++dx) {
-                const int d2 = dx * dx + dy * dy;
-                if (d2 <= r2) {
-                    SetPixelRgb(
-                        rgb,
-                        width,
-                        height,
-                        cx + dx,
-                        cy + dy,
-                        r,
-                        g,
-                        b
-                    );
-                }
-            }
-        }
-    }
-
 } // namespace
 
 void SaveNchwFloatTensorD3D12BufferAsBmp(
@@ -1623,15 +1545,8 @@ namespace {
         uint8_t b
     )
     {
-        // Final selected tip marker:
-        // - white outer ring for visibility on dark/colored masks
-        // - class-color inner ring to preserve class identity
-        // - small white center dot indicating the exact coordinate
-        // This replaces the previous large cross marker, which was hard to
-        // distinguish from candidate1/candidate2 crosses.
-        DrawCircleOutlineRgb(rgb, width, height, x, y, 24, 255, 255, 255, 5);
-        DrawCircleOutlineRgb(rgb, width, height, x, y, 17, r, g, b, 5);
-        DrawFilledCircleRgb(rgb, width, height, x, y, 4, 255, 255, 255);
+        DrawCrossRgb(rgb, width, height, x, y, r, g, b, 14);
+        DrawSmallMarkerRgb(rgb, width, height, x, y, 255, 255, 255);
     }
 
 } // namespace

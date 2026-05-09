@@ -34,9 +34,6 @@
 
 namespace {
 
-    constexpr bool kEnableOriginalTipDebugImageSave = true;
-    constexpr int kOriginalTipDebugSaveInterval = 250;
-
     std::wstring string_to_wstring_utf8(const std::string& str)
     {
         if (str.empty()) {
@@ -234,7 +231,6 @@ int wmain(int argc, wchar_t** argv)
         tip_config.min_area_pixels = 10;
         tip_config.end_region_ratio = 0.10f;
         tip_config.top_edge_ratio = 0.05f;
-        tip_config.edge_reject_ratio = 0.02f;
 
         ToolTipDetectorD3D12 tip_detector(
             d3d12,
@@ -364,7 +360,10 @@ int wmain(int argc, wchar_t** argv)
 
             const auto end_tooltip = std::chrono::high_resolution_clock::now();
 
-            // std::cout << "frame idx: " << frame.frameIndex << ", valid tips: " << tip_results.size() << "\n";
+            std::cout
+                << "frame idx: " << frame.frameIndex
+                << ", valid tips: " << tip_results.size()
+                << "\n";
 
             bridge_copy_duration +=
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -409,66 +408,26 @@ int wmain(int argc, wchar_t** argv)
             // debug plot にそのまま使える。
             // --------------------------------------------------------
 
-            if (kEnableOriginalTipDebugImageSave &&
-                frame.frameIndex % kOriginalTipDebugSaveInterval == 0)
-            {
+            if (frame.frameIndex % 500 == 0) {
+                //const std::string path =
+                //    "img\\debug_tooltips_" +
+                //    std::to_string(frame.frameIndex) +
+                //    ".bmp";
 
-                const std::string path =
-                    "img\\debug_original_tooltips_" +
-                    std::to_string(frame.frameIndex) +
-                    ".bmp";
+                //const std::wstring wpath =
+                //    string_to_wstring_utf8(path);
 
-                const std::wstring wpath =
-                    string_to_wstring_utf8(path);
+                //std::cout << "save as " << path << "\n";
 
-                const auto& lb = preprocessor.letterbox_params();
-
-                std::cout << "save original tooltip + mask overlay plot as " << path << "\n";
-
-
-                // Debug-only heavy readback. This is intentionally inside the
-                // debug-save branch so normal runtime still reads back only tip results.
-                const std::vector<YoloSegPostProcessorD3D12::DetectionWithMask> mask_results =
-                    postprocessor.readback_results();
-
-                std::cout
-                    << "debug save frameIndex=" << frame.frameIndex
-                    << " timestamp100ns=" << frame.timestamp100ns
-                    << " tip_count=" << tip_results.size()
-                    << " mask_count=" << mask_results.size()
-                    << "\n";
-
-                {
-                    // The debug image is saved from the same shared D3D11 NV12
-                    // texture that was used for D3D12 preprocessing. Because this
-                    // texture uses a keyed mutex, D3D11 must acquire ownership
-                    // before the save function copies/reads it.
-                    auto d3d11_debug_read_guard =
-                        bridge->acquire_for_d3d11_read_guard();
-
-                    SaveD3D11Nv12TextureWithOriginalMasksAndToolTipsAsBmp(
-                        d3d11,
-                        bridge->d3d11_shared_nv12_texture(),
-                        0,  // bridge側shared textureは単一フレームなので subresource は 0
-                        frame.width,
-                        frame.height,
-                        mask_results,
-                        tip_results,
-                        wpath.c_str(),
-                        static_cast<float>(preprocessor.input_width()),
-                        static_cast<float>(preprocessor.input_height()),
-                        static_cast<float>(tip_config.mask_width),
-                        static_cast<float>(tip_config.mask_height),
-                        lb.scale,
-                        lb.pad_x,
-                        lb.pad_y,
-                        0.25f,
-                        0.5f,
-                        0.45f,
-                        true,
-                        true
-                    );
-                }
+                //SaveNchwFloatTensorWithToolTipsAsBmp(
+                //    input_tensor,
+                //    preprocessor.input_width(),
+                //    preprocessor.input_height(),
+                //    tip_results,
+                //    wpath.c_str(),
+                //    true,   // draw_candidates
+                //    true    // draw_axis
+                //);
             }
         }
 

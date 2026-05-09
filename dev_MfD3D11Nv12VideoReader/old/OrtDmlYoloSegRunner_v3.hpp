@@ -8,7 +8,6 @@
 #include <wrl/client.h>
 
 #include <d3d12.h>
-#include <DirectML.h>
 
 #include <onnxruntime_cxx_api.h>
 #include <dml_provider_factory.h>
@@ -22,8 +21,6 @@
 #include "D3D12Core.hpp"
 
 #pragma comment(lib, "onnxruntime.lib")
-#pragma comment(lib, "DirectML.lib")
-#pragma comment(lib, "d3d12.lib")
 
 class OrtDmlYoloSegRunner {
 public:
@@ -41,31 +38,21 @@ public:
 
 public:
     OrtDmlYoloSegRunner();
-    ~OrtDmlYoloSegRunner() = default;
 
     OrtDmlYoloSegRunner(const OrtDmlYoloSegRunner&) = delete;
     OrtDmlYoloSegRunner& operator=(const OrtDmlYoloSegRunner&) = delete;
 
-    // Legacy initializer.
-    // This uses DML device_id mode when use_directml=true. It is kept for CPU-input tests.
-    // True D3D12-resource I/O binding requires initialize_with_d3d12().
     void initialize(
         const wchar_t* model_path,
         bool use_directml = true,
         int dml_device_id = 0
     );
 
-    // Preferred initializer for true D3D12 buffer input/output binding.
-    // It creates a DirectML device from the same ID3D12Device as D3D12Core and
-    // registers DML1 EP with D3D12Core's command queue.
-    void initialize_with_d3d12(
-        D3D12Core& d3d12_core,
-        const wchar_t* model_path
-    );
-
-    // Optional for legacy CPU-input + output-upload path.
+    // Optional. Call this before run_cpu_input_and_upload_outputs()
+    // if you want this runner to expose ORT outputs as D3D12 buffers.
     void set_d3d12_core(D3D12Core& d3d12_core);
 
+    // Existing CPU-input / CPU-output path.
     std::vector<OutputTensor> run_cpu_input(
         const std::vector<float>& input_tensor,
         int64_t batch,
@@ -74,11 +61,15 @@ public:
         int64_t width
     );
 
-    // True D3D12-input path when initialized with initialize_with_d3d12().
-    // If the runner was initialized with the legacy initialize(), this function
-    // falls back to the old transitional readback path so existing tests still run.
-    // In true DML1 mode, the returned OutputTensor entries contain name/shape only;
-    // data is intentionally empty to avoid CPU readback.
+
+
+    // Transitional D3D12-input path.
+    // Input is received as a D3D12 buffer, internally read back to CPU,
+    // then the existing CPU-input ORT path is used. ORT outputs are uploaded
+    // to D3D12 output buffers, so the caller can pass output0/output1 to
+    // YoloSegPostProcessorD3D12::process_external_outputs_and_wait().
+    // This removes the explicit readback code from main(), but it is not yet
+    // true ORT/DML GPU input binding.
     std::vector<OutputTensor> run_d3d12_input_and_upload_outputs(
         ID3D12Resource* input_buffer,
         D3D12_RESOURCE_STATES& input_buffer_state,
@@ -88,6 +79,11 @@ public:
         int64_t width
     );
 
+    // Transitional path.
+    // Input is still CPU std::vector<float>, but ORT CPU outputs are uploaded
+    // into D3D12 default buffers owned by this runner.
+    // This lets YoloSegPostProcessorD3D12 consume the outputs through
+    // process_external_outputs_and_wait().
     std::vector<OutputTensor> run_cpu_input_and_upload_outputs(
         const std::vector<float>& input_tensor,
         int64_t batch,
@@ -104,8 +100,6 @@ public:
 
     const std::vector<TensorInfo>& input_infos() const;
     const std::vector<TensorInfo>& output_infos() const;
-
-    bool is_dml1_io_binding_enabled() const;
 
     size_t gpu_output_count() const;
 
@@ -133,13 +127,6 @@ private:
     };
 
 private:
-    void initialize_impl(
-        const wchar_t* model_path,
-        bool use_directml,
-        int dml_device_id,
-        bool use_dml1_with_d3d12
-    );
-
     void collect_model_io_info();
 
     static std::string shape_to_string(
@@ -156,7 +143,7 @@ private:
         size_t element_count
     );
 
-    void ensure_gpu_output_buffers_from_model_info();
+
 
     std::vector<float> readback_d3d12_float_buffer(
         ID3D12Resource* buffer,
@@ -170,29 +157,8 @@ private:
         const std::vector<float>& data
     );
 
-    std::vector<OutputTensor> run_d3d12_input_with_iobinding(
-        ID3D12Resource* input_buffer,
-        D3D12_RESOURCE_STATES& input_buffer_state,
-        const std::vector<int64_t>& input_shape
-    );
-
-    Ort::Value create_dml_tensor_from_d3d12_resource(
-        ID3D12Resource* resource,
-        size_t byte_size,
-        const std::vector<int64_t>& shape,
-        void** out_dml_allocation
-    );
-
-    void free_dml_allocation(void* allocation) noexcept;
-
     void transition_resource(
         ID3D12GraphicsCommandList* command_list,
-        ID3D12Resource* resource,
-        D3D12_RESOURCE_STATES& current_state,
-        D3D12_RESOURCE_STATES new_state
-    );
-
-    void transition_resource_and_wait(
         ID3D12Resource* resource,
         D3D12_RESOURCE_STATES& current_state,
         D3D12_RESOURCE_STATES new_state
@@ -214,13 +180,11 @@ private:
 
     D3D12Core* d3d12_core_ = nullptr;
 
-    const OrtDmlApi* dml_api_ = nullptr;
-    Microsoft::WRL::ComPtr<IDMLDevice> dml_device_;
-    bool dml1_io_binding_enabled_ = false;
-
     std::vector<TensorInfo> input_infos_;
     std::vector<TensorInfo> output_infos_;
 
+    // Ort::AllocatedStringPtr の寿命問題を避けるため、
+    // node名は std::string で保持し、Run時に c_str() 配列を作る。
     std::vector<std::string> input_names_;
     std::vector<std::string> output_names_;
 

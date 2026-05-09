@@ -93,23 +93,6 @@ ToolTipDetectorD3D12::ToolTipDetectorD3D12(
     this->update_params();
 }
 
-void ToolTipDetectorD3D12::set_original_mapping(
-    UINT original_width,
-    UINT original_height,
-    float letterbox_scale,
-    float letterbox_pad_x,
-    float letterbox_pad_y
-)
-{
-    this->config_.original_width = static_cast<float>(original_width);
-    this->config_.original_height = static_cast<float>(original_height);
-    this->config_.letterbox_scale = letterbox_scale;
-    this->config_.letterbox_pad_x = letterbox_pad_x;
-    this->config_.letterbox_pad_y = letterbox_pad_y;
-
-    this->update_params();
-}
-
 void ToolTipDetectorD3D12::detect_and_wait(
     ID3D12Resource* selected_detection_buffer,
     D3D12_RESOURCE_STATES& selected_detection_state,
@@ -149,21 +132,6 @@ void ToolTipDetectorD3D12::detect_and_wait(
 
 std::vector<ToolTipDetectorD3D12::TipResult>
 ToolTipDetectorD3D12::readback_results()
-{
-    std::vector<TipResult> all_results = this->readback_all_results();
-    std::vector<TipResult> valid_results;
-
-    for (const auto& r : all_results) {
-        if (r.valid != 0) {
-            valid_results.push_back(r);
-        }
-    }
-
-    return valid_results;
-}
-
-std::vector<ToolTipDetectorD3D12::TipResult>
-ToolTipDetectorD3D12::readback_all_results()
 {
     const UINT64 result_bytes =
         static_cast<UINT64>(this->config_.max_detections) *
@@ -245,7 +213,15 @@ ToolTipDetectorD3D12::readback_all_results()
         nullptr
     );
 
-    return all_results;
+    std::vector<TipResult> valid_results;
+
+    for (const auto& r : all_results) {
+        if (r.valid != 0) {
+            valid_results.push_back(r);
+        }
+    }
+
+    return valid_results;
 }
 
 ID3D12Resource* ToolTipDetectorD3D12::result_buffer() const
@@ -383,9 +359,6 @@ struct TipResult
     float tipXInput;
     float tipYInput;
 
-    float tipXOriginal;
-    float tipYOriginal;
-
     float candidate1XMask;
     float candidate1YMask;
 
@@ -399,13 +372,6 @@ struct TipResult
 
     float axisX;
     float axisY;
-
-    float confidence;
-    float widthRatio;
-    float areaRatio;
-    float axisLength;
-
-    uint failureReason;
 };
 
 StructuredBuffer<Detection> g_detections : register(t0);
@@ -429,49 +395,15 @@ cbuffer Params : register(b0)
     float maskThreshold;
     float endRegionRatio;
     float topEdgeRatio;
-    float edgeRejectRatio;
-
-    float originalWidth;
-    float originalHeight;
-    float letterboxScale;
-    float letterboxPadX;
-
-    float letterboxPadY;
-    float reserved1;
-    float reserved2;
-    float reserved3;
+    float reserved0;
 };
-
-static const uint FAILURE_NONE = 0;
-static const uint FAILURE_OUT_OF_RANGE = 1;
-static const uint FAILURE_CLASS_MISMATCH = 2;
-static const uint FAILURE_AREA_TOO_SMALL = 3;
-static const uint FAILURE_INVALID_AXIS = 4;
-static const uint FAILURE_INVALID_SPAN = 5;
-static const uint FAILURE_INVALID_END_REGION = 6;
-static const uint FAILURE_CANDIDATES_NEAR_EDGE = 7;
-static const uint FAILURE_UNKNOWN = 255;
 
 float ReadMask(uint detIndex, uint pixelIndex)
 {
     return g_masks[detIndex * maskPixels + pixelIndex];
 }
 
-float InputToOriginalX(float x)
-{
-    float s = max(letterboxScale, 1e-6f);
-    float v = (x - letterboxPadX) / s;
-    return clamp(v, 0.0f, max(0.0f, originalWidth - 1.0f));
-}
-
-float InputToOriginalY(float y)
-{
-    float s = max(letterboxScale, 1e-6f);
-    float v = (y - letterboxPadY) / s;
-    return clamp(v, 0.0f, max(0.0f, originalHeight - 1.0f));
-}
-
-void WriteInvalid(uint detIndex, uint failureReason)
+void WriteInvalid(uint detIndex)
 {
     TipResult r;
     r.valid = 0;
@@ -483,8 +415,6 @@ void WriteInvalid(uint detIndex, uint failureReason)
     r.tipYMask = 0.0f;
     r.tipXInput = 0.0f;
     r.tipYInput = 0.0f;
-    r.tipXOriginal = 0.0f;
-    r.tipYOriginal = 0.0f;
 
     r.candidate1XMask = 0.0f;
     r.candidate1YMask = 0.0f;
@@ -498,12 +428,6 @@ void WriteInvalid(uint detIndex, uint failureReason)
 
     r.axisX = 0.0f;
     r.axisY = 0.0f;
-
-    r.confidence = 0.0f;
-    r.widthRatio = 0.0f;
-    r.areaRatio = 0.0f;
-    r.axisLength = 0.0f;
-    r.failureReason = failureReason;
 
     g_results[detIndex] = r;
 }
@@ -523,7 +447,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     if (detIndex >= detectionCount)
     {
-        WriteInvalid(detIndex, FAILURE_OUT_OF_RANGE);
+        WriteInvalid(detIndex);
         return;
     }
 
@@ -531,7 +455,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     if (det.classId != targetClassId)
     {
-        WriteInvalid(detIndex, FAILURE_CLASS_MISMATCH);
+        WriteInvalid(detIndex);
         return;
     }
 
@@ -573,7 +497,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     if (count < (float)minAreaPixels)
     {
-        WriteInvalid(detIndex, FAILURE_AREA_TOO_SMALL);
+        WriteInvalid(detIndex);
         return;
     }
 
@@ -593,7 +517,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     if (axisLen < 1e-6f)
     {
-        WriteInvalid(detIndex, FAILURE_INVALID_AXIS);
+        WriteInvalid(detIndex);
         return;
     }
 
@@ -636,7 +560,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     if (span < 1e-4f)
     {
-        WriteInvalid(detIndex, FAILURE_INVALID_SPAN);
+        WriteInvalid(detIndex);
         return;
     }
 
@@ -701,7 +625,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     if (minSideCount < 1.0f || maxSideCount < 1.0f)
     {
-        WriteInvalid(detIndex, FAILURE_INVALID_END_REGION);
+        WriteInvalid(detIndex);
         return;
     }
 
@@ -712,117 +636,8 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float minWidth = max(0.0f, minSidePerpMax - minSidePerpMin);
     float maxWidth = max(0.0f, maxSidePerpMax - maxSidePerpMin);
-)"
-R"(
-    // ------------------------------------------------------------
-    // Pass D: choose endpoint candidates from actual binary-mask pixels.
-    //
-    // Previous version selected the mask pixel closest to the centroid
-    // of each end region, which tends to move the candidate inward.
-    // This version prefers the most outward pixel along the principal
-    // axis. If multiple pixels are similarly outward, it chooses the one
-    // closest to the center of that end region in the normal direction.
-    // ------------------------------------------------------------
 
-    float minSidePerpCenter =
-        0.5f * (minSidePerpMin + minSidePerpMax);
-
-    float maxSidePerpCenter =
-        0.5f * (maxSidePerpMin + maxSidePerpMax);
-
-    float minPointX = minCenterX;
-    float minPointY = minCenterY;
-    float maxPointX = maxCenterX;
-    float maxPointY = maxCenterY;
-
-    // For min side, smaller proj is better.
-    // For max side, larger proj is better.
-    float bestMinProj =  1e30f;
-    float bestMaxProj = -1e30f;
-
-    float bestMinPerpErr = 1e30f;
-    float bestMaxPerpErr = 1e30f;
-
-    // Tolerance in projection direction.
-    // If two points have almost same outwardness, use normal-center closeness.
-    float projEps = 0.75f;
-
-    [loop]
-    for (uint y4 = 0; y4 < maskHeight; ++y4)
-    {
-        [loop]
-        for (uint x4 = 0; x4 < maskWidth; ++x4)
-        {
-            uint idx4 = y4 * maskWidth + x4;
-            float m4 = ReadMask(detIndex, idx4);
-
-            if (m4 < maskThreshold)
-            {
-                continue;
-            }
-
-            float2 p4 = float2((float)x4 + 0.5f, (float)y4 + 0.5f);
-            float2 q4 = p4 - float2(cx, cy);
-
-            float proj4 = dot(q4, axis);
-            float perp4 = dot(q4, normal);
-
-            // --------------------------
-            // min side candidate
-            // --------------------------
-            if (proj4 <= minProj + endRegion)
-            {
-                float perpErr = abs(perp4 - minSidePerpCenter);
-
-                bool betterProj =
-                    proj4 < bestMinProj - projEps;
-
-                bool sameProjButMoreCentered =
-                    abs(proj4 - bestMinProj) <= projEps &&
-                    perpErr < bestMinPerpErr;
-
-                if (betterProj || sameProjButMoreCentered)
-                {
-                    bestMinProj = proj4;
-                    bestMinPerpErr = perpErr;
-                    minPointX = p4.x;
-                    minPointY = p4.y;
-                }
-            }
-
-            // --------------------------
-            // max side candidate
-            // --------------------------
-            if (proj4 >= maxProj - endRegion)
-            {
-                float perpErr2 = abs(perp4 - maxSidePerpCenter);
-
-                bool betterProj2 =
-                    proj4 > bestMaxProj + projEps;
-
-                bool sameProjButMoreCentered2 =
-                    abs(proj4 - bestMaxProj) <= projEps &&
-                    perpErr2 < bestMaxPerpErr;
-
-                if (betterProj2 || sameProjButMoreCentered2)
-                {
-                    bestMaxProj = proj4;
-                    bestMaxPerpErr = perpErr2;
-                    maxPointX = p4.x;
-                    maxPointY = p4.y;
-                }
-            }
-        }
-    }
-
-    if (bestMinProj > 1e29f || bestMaxProj < -1e29f)
-    {
-        WriteInvalid(detIndex, FAILURE_INVALID_END_REGION);
-        return;
-    }
-
-    // 幅が細い側を candidate1、反対側を candidate2。
-    // 各候補座標は必ず mask==1 のピクセル中心になる。
+    // 幅が細い側を candidate1、反対側を candidate2
     float candidate1X;
     float candidate1Y;
     float candidate1Width;
@@ -833,106 +648,41 @@ R"(
 
     if (minWidth <= maxWidth)
     {
-        candidate1X = minPointX;
-        candidate1Y = minPointY;
+        candidate1X = minCenterX;
+        candidate1Y = minCenterY;
         candidate1Width = minWidth;
 
-        candidate2X = maxPointX;
-        candidate2Y = maxPointY;
+        candidate2X = maxCenterX;
+        candidate2Y = maxCenterY;
         candidate2Width = maxWidth;
     }
     else
     {
-        candidate1X = maxPointX;
-        candidate1Y = maxPointY;
+        candidate1X = maxCenterX;
+        candidate1Y = maxCenterY;
         candidate1Width = maxWidth;
 
-        candidate2X = minPointX;
-        candidate2Y = minPointY;
+        candidate2X = minCenterX;
+        candidate2Y = minCenterY;
         candidate2Width = minWidth;
     }
 
-    // ------------------------------------------------------------
-    // Pass E: reject endpoint candidates near the ORIGINAL frame edge.
-    //
-    // Candidate coordinates are selected from mask==1 pixels in mask space.
-    // For edge rejection, convert each candidate to YOLO input space and then
-    // to original-frame space using the same letterbox inverse transform used
-    // for the final tip coordinate.
-    //
-    // edgeRejectRatio = 0.03 means:
-    //   x within 3% of originalWidth from left/right edge, or
-    //   y within 3% of originalHeight from top/bottom edge
-    // is rejected.
-    // ------------------------------------------------------------
-
-    float candidate1XInput = candidate1X * inputWidth / (float)maskWidth;
-    float candidate1YInput = candidate1Y * inputHeight / (float)maskHeight;
-    float candidate2XInput = candidate2X * inputWidth / (float)maskWidth;
-    float candidate2YInput = candidate2Y * inputHeight / (float)maskHeight;
-
-    float candidate1XOriginal = InputToOriginalX(candidate1XInput);
-    float candidate1YOriginal = InputToOriginalY(candidate1YInput);
-    float candidate2XOriginal = InputToOriginalX(candidate2XInput);
-    float candidate2YOriginal = InputToOriginalY(candidate2YInput);
-
-    float originalEdgeX = max(1.0f, edgeRejectRatio * max(originalWidth, 1.0f));
-    float originalEdgeY = max(1.0f, edgeRejectRatio * max(originalHeight, 1.0f));
-
-    float originalMaxX = max(0.0f, originalWidth - 1.0f);
-    float originalMaxY = max(0.0f, originalHeight - 1.0f);
-
-    bool candidate1NearEdge =
-        candidate1XOriginal <= originalEdgeX ||
-        candidate1XOriginal >= (originalMaxX - originalEdgeX) ||
-        candidate1YOriginal <= originalEdgeY ||
-        candidate1YOriginal >= (originalMaxY - originalEdgeY);
-
-    bool candidate2NearEdge =
-        candidate2XOriginal <= originalEdgeX ||
-        candidate2XOriginal >= (originalMaxX - originalEdgeX) ||
-        candidate2YOriginal <= originalEdgeY ||
-        candidate2YOriginal >= (originalMaxY - originalEdgeY);
+    // candidate1 がフレーム上端5%以内なら candidate2 を採用
+    float topEdgeY = topEdgeRatio * (float)maskHeight;
 
     uint selectedCandidate = 1;
     float tipX = candidate1X;
     float tipY = candidate1Y;
-    float tipXInput = candidate1XInput;
-    float tipYInput = candidate1YInput;
-    float tipXOriginal = candidate1XOriginal;
-    float tipYOriginal = candidate1YOriginal;
 
-    if (candidate1NearEdge)
+    if (candidate1Y <= topEdgeY)
     {
-        if (candidate2NearEdge)
-        {
-            WriteInvalid(detIndex, FAILURE_CANDIDATES_NEAR_EDGE);
-            return;
-        }
-
         selectedCandidate = 2;
         tipX = candidate2X;
         tipY = candidate2Y;
-        tipXInput = candidate2XInput;
-        tipYInput = candidate2YInput;
-        tipXOriginal = candidate2XOriginal;
-        tipYOriginal = candidate2YOriginal;
     }
 
-    float thinnerWidth = min(candidate1Width, candidate2Width);
-    float thickerWidth = max(candidate1Width, candidate2Width);
-    float widthRatio = thinnerWidth / max(thickerWidth, 1e-6f);
-
-    float areaRatio = count / max((float)maskPixels, 1.0f);
-    float axisLength = span;
-
-    // Heuristic confidence.
-    // width confidence: 1 when one side is much thinner, 0 when both ends have same width.
-    // area confidence: saturates around 5% of mask pixels.
-    float widthConfidence = saturate(1.0f - widthRatio);
-    float areaConfidence = saturate(areaRatio / 0.05f);
-    float axisConfidence = saturate(axisLength / max((float)max(maskWidth, maskHeight), 1.0f));
-    float confidence = saturate(widthConfidence * 0.65f + areaConfidence * 0.20f + axisConfidence * 0.15f);
+    float tipXInput = tipX * inputWidth / (float)maskWidth;
+    float tipYInput = tipY * inputHeight / (float)maskHeight;
 
     TipResult outR;
     outR.valid = 1;
@@ -945,9 +695,6 @@ R"(
 
     outR.tipXInput = tipXInput;
     outR.tipYInput = tipYInput;
-
-    outR.tipXOriginal = tipXOriginal;
-    outR.tipYOriginal = tipYOriginal;
 
     outR.candidate1XMask = candidate1X;
     outR.candidate1YMask = candidate1Y;
@@ -963,14 +710,9 @@ R"(
     outR.axisX = axis.x;
     outR.axisY = axis.y;
 
-    outR.confidence = confidence;
-    outR.widthRatio = widthRatio;
-    outR.areaRatio = areaRatio;
-    outR.axisLength = axisLength;
-    outR.failureReason = FAILURE_NONE;
-
     g_results[detIndex] = outR;
 }
+
 )";
 
     Microsoft::WRL::ComPtr<ID3DBlob> cs_blob;
@@ -1130,13 +872,6 @@ void ToolTipDetectorD3D12::update_params()
     params.mask_threshold = this->config_.mask_threshold;
     params.end_region_ratio = this->config_.end_region_ratio;
     params.top_edge_ratio = this->config_.top_edge_ratio;
-    params.edge_reject_ratio = this->config_.edge_reject_ratio;
-
-    params.original_width = this->config_.original_width;
-    params.original_height = this->config_.original_height;
-    params.letterbox_scale = this->config_.letterbox_scale;
-    params.letterbox_pad_x = this->config_.letterbox_pad_x;
-    params.letterbox_pad_y = this->config_.letterbox_pad_y;
 
     std::memcpy(
         this->mapped_constants_,

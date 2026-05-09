@@ -16,38 +16,14 @@
 
 class ToolTipDetectorD3D12 {
 public:
-    enum FailureReason : UINT {
-        FAILURE_NONE = 0,
-        FAILURE_OUT_OF_RANGE = 1,
-        FAILURE_CLASS_MISMATCH = 2,
-        FAILURE_AREA_TOO_SMALL = 3,
-        FAILURE_INVALID_AXIS = 4,
-        FAILURE_INVALID_SPAN = 5,
-        FAILURE_INVALID_END_REGION = 6,
-        FAILURE_CANDIDATES_NEAR_EDGE = 7,
-        FAILURE_UNKNOWN = 255
-    };
-
     struct Config {
         UINT max_detections = 512;
 
         UINT mask_width = 160;
         UINT mask_height = 160;
 
-        // YOLO input / letterbox image size, usually 640x640.
         float input_width = 640.0f;
         float input_height = 640.0f;
-
-        // Original source frame size. Used to compute tip_x_original / tip_y_original.
-        // If not explicitly set, these default to input_width/input_height.
-        float original_width = 640.0f;
-        float original_height = 640.0f;
-
-        // Letterbox parameters used by Nv12YoloPreprocessorD3D12.
-        // input = original * letterbox_scale + letterbox_pad.
-        float letterbox_scale = 1.0f;
-        float letterbox_pad_x = 0.0f;
-        float letterbox_pad_y = 0.0f;
 
         // 先端検出対象 class
         UINT target_class_id = 1;
@@ -62,12 +38,8 @@ public:
         // 0.10なら、主軸方向の端10%を幅推定に使う。
         float end_region_ratio = 0.10f;
 
-        // 旧設定値。互換性のため残しますが、現在の端判定には edge_reject_ratio を使います。
+        // 「上端5%」判定
         float top_edge_ratio = 0.05f;
-
-        // 候補点が上下左右の端からこの割合以内なら、その候補を棄却する。
-        // 0.03なら、元画像の上下左右端から3%以内を端扱いにする。
-        float edge_reject_ratio = 0.03f;
     };
 
     struct TipResult {
@@ -84,10 +56,6 @@ public:
         float tip_x_input = 0.0f;
         float tip_y_input = 0.0f;
 
-        // selected tip center in original source frame space.
-        float tip_x_original = 0.0f;
-        float tip_y_original = 0.0f;
-
         // candidate 1: thinner side before top-edge override
         float candidate1_x_mask = 0.0f;
         float candidate1_y_mask = 0.0f;
@@ -103,14 +71,6 @@ public:
 
         float axis_x = 0.0f;
         float axis_y = 0.0f;
-
-        // Diagnostic values.
-        // width_ratio = thinner_width / thicker_width. Smaller means tip-side decision is clearer.
-        float confidence = 0.0f;
-        float width_ratio = 0.0f;
-        float area_ratio = 0.0f;
-        float axis_length = 0.0f;
-        UINT failure_reason = FAILURE_NONE;
     };
 
 public:
@@ -122,16 +82,6 @@ public:
     ToolTipDetectorD3D12(const ToolTipDetectorD3D12&) = delete;
     ToolTipDetectorD3D12& operator=(const ToolTipDetectorD3D12&) = delete;
 
-    // Update original-frame / letterbox mapping.
-    // Call this after Nv12YoloPreprocessorD3D12::preprocess_and_wait() when the source size may change.
-    void set_original_mapping(
-        UINT original_width,
-        UINT original_height,
-        float letterbox_scale,
-        float letterbox_pad_x,
-        float letterbox_pad_y
-    );
-
     void detect_and_wait(
         ID3D12Resource* selected_detection_buffer,
         D3D12_RESOURCE_STATES& selected_detection_state,
@@ -141,11 +91,7 @@ public:
         D3D12_RESOURCE_STATES& selected_mask_state
     );
 
-    // Only valid results.
     std::vector<TipResult> readback_results();
-
-    // All result slots. Useful to inspect failure_reason for invalid detections.
-    std::vector<TipResult> readback_all_results();
 
     ID3D12Resource* result_buffer() const;
     D3D12_RESOURCE_STATES& result_buffer_state_ref();
@@ -167,17 +113,7 @@ private:
         float mask_threshold;
         float end_region_ratio;
         float top_edge_ratio;
-        float edge_reject_ratio;
-
-        float original_width;
-        float original_height;
-        float letterbox_scale;
-        float letterbox_pad_x;
-
-        float letterbox_pad_y;
-        float reserved1;
-        float reserved2;
-        float reserved3;
+        float reserved0;
     };
 
 private:

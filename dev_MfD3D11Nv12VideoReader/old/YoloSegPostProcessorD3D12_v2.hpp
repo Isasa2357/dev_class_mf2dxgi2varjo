@@ -68,25 +68,12 @@ public:
 
     ~YoloSegPostProcessorD3D12();
 
-    // Debug/current path:
-    // CPU output0/output1 -> internal D3D12 buffers.
     void upload_outputs_from_cpu(
         const std::vector<float>& output0,
         const std::vector<float>& output1
     );
 
-    // Process internal output0_buffer_ / output1_buffer_.
     void process_uploaded_outputs_and_wait();
-
-    // Future GPU path:
-    // Process external GPU output0/output1 buffers directly.
-    // This is the entry point to use when ORT/DML outputs are available as D3D12 buffers.
-    void process_external_outputs_and_wait(
-        ID3D12Resource* external_output0_buffer,
-        D3D12_RESOURCE_STATES& external_output0_state,
-        ID3D12Resource* external_output1_buffer,
-        D3D12_RESOURCE_STATES& external_output1_state
-    );
 
     std::vector<DetectionWithMask> readback_results();
 
@@ -102,6 +89,13 @@ public:
     D3D12_RESOURCE_STATES& selected_detection_state_ref() { return this->selected_detection_state_; }
     D3D12_RESOURCE_STATES& selected_counter_state_ref() { return this->selected_counter_state_; }
     D3D12_RESOURCE_STATES& selected_mask_state_ref() { return this->selected_mask_state_; }
+
+    void process_external_outputs_and_wait(
+        ID3D12Resource* external_output0_buffer,
+        D3D12_RESOURCE_STATES& external_output0_state,
+        ID3D12Resource* external_output1_buffer,
+        D3D12_RESOURCE_STATES& external_output1_state
+    );
 
 private:
     struct ShaderParams {
@@ -135,11 +129,6 @@ private:
     void create_constant_buffer();
     void update_params();
 
-    void create_output_input_descriptors(
-        ID3D12Resource* output0_buffer,
-        ID3D12Resource* output1_buffer
-    );
-
     void upload_buffer_from_cpu(
         ID3D12Resource* dst_buffer,
         D3D12_RESOURCE_STATES& dst_state,
@@ -156,14 +145,6 @@ private:
         ID3D12GraphicsCommandList* command_list
     );
 
-    void record_process_external(
-        ID3D12GraphicsCommandList* command_list,
-        ID3D12Resource* output0_buffer,
-        D3D12_RESOURCE_STATES& output0_state,
-        ID3D12Resource* output1_buffer,
-        D3D12_RESOURCE_STATES& output1_state
-    );
-
     void transition_resource(
         ID3D12GraphicsCommandList* command_list,
         ID3D12Resource* resource,
@@ -172,6 +153,19 @@ private:
     );
 
     static UINT align256(UINT value);
+
+    void create_output_input_descriptors(
+        ID3D12Resource* output0_buffer,
+        ID3D12Resource* output1_buffer
+    );
+
+    void record_process_external(
+        ID3D12GraphicsCommandList* command_list,
+        ID3D12Resource* output0_buffer,
+        D3D12_RESOURCE_STATES& output0_state,
+        ID3D12Resource* output1_buffer,
+        D3D12_RESOURCE_STATES& output1_state
+    );
 
 private:
     D3D12Core& d3d12_core_;
@@ -187,7 +181,6 @@ private:
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> descriptor_heap_;
     UINT descriptor_size_ = 0;
 
-    // Internal debug/current buffers used by upload_outputs_from_cpu().
     Microsoft::WRL::ComPtr<ID3D12Resource> output0_buffer_;
     Microsoft::WRL::ComPtr<ID3D12Resource> output0_upload_buffer_;
     D3D12_RESOURCE_STATES output0_state_ = D3D12_RESOURCE_STATE_COMMON;

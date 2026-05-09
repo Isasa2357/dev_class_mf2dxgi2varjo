@@ -8,13 +8,11 @@
 #include <wrl/client.h>
 
 #include <d3d12.h>
-#include <d3d11.h>
 
 #include <vector>
 #include <cstdint>
 
 #include "D3D12Core.hpp"
-#include "D3D11Core.hpp"
 #include "YoloSegPostProcessorD3D12.hpp"
 #include "ToolTipDetectorD3D12.hpp"
 
@@ -76,55 +74,6 @@ void SaveNchwFloatTensorWithToolTipsAsBmp(
     UINT height,
     const std::vector<ToolTipDetectorD3D12::TipResult>& tip_results,
     const wchar_t* output_path,
-    bool draw_candidates = true,
-    bool draw_axis = true
-);
-
-// Debug-only helper.
-// Saves the original NV12 D3D11 frame as BMP and plots tip_x_original / tip_y_original.
-// If draw_candidates is true, candidate1/candidate2 are also mapped from 160x160 mask space
-// to original frame space using the supplied letterbox parameters.
-void SaveD3D11Nv12TextureWithOriginalToolTipsAsBmp(
-    D3D11Core& d3d11_core,
-    ID3D11Texture2D* nv12_texture,
-    UINT source_subresource_index,
-    UINT width,
-    UINT height,
-    const std::vector<ToolTipDetectorD3D12::TipResult>& tip_results,
-    const wchar_t* output_path,
-    float input_width = 640.0f,
-    float input_height = 640.0f,
-    float mask_width = 160.0f,
-    float mask_height = 160.0f,
-    float letterbox_scale = 1.0f,
-    float letterbox_pad_x = 0.0f,
-    float letterbox_pad_y = 0.0f,
-    bool draw_candidates = true,
-    bool draw_axis = true
-);
-
-// Debug-only helper.
-// Saves the original NV12 D3D11 frame as BMP, overlays 160x160 postprocess masks
-// without drawing bounding boxes, and then plots tip_x_original / tip_y_original.
-void SaveD3D11Nv12TextureWithOriginalMasksAndToolTipsAsBmp(
-    D3D11Core& d3d11_core,
-    ID3D11Texture2D* nv12_texture,
-    UINT source_subresource_index,
-    UINT width,
-    UINT height,
-    const std::vector<YoloSegPostProcessorD3D12::DetectionWithMask>& mask_results,
-    const std::vector<ToolTipDetectorD3D12::TipResult>& tip_results,
-    const wchar_t* output_path,
-    float input_width = 640.0f,
-    float input_height = 640.0f,
-    float mask_width = 160.0f,
-    float mask_height = 160.0f,
-    float letterbox_scale = 1.0f,
-    float letterbox_pad_x = 0.0f,
-    float letterbox_pad_y = 0.0f,
-    float score_threshold = 0.25f,
-    float mask_threshold = 0.5f,
-    float mask_alpha = 0.45f,
     bool draw_candidates = true,
     bool draw_axis = true
 );

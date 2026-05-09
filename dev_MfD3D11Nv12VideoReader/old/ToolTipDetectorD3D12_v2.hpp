@@ -24,7 +24,6 @@ public:
         FAILURE_INVALID_AXIS = 4,
         FAILURE_INVALID_SPAN = 5,
         FAILURE_INVALID_END_REGION = 6,
-        FAILURE_CANDIDATES_NEAR_EDGE = 7,
         FAILURE_UNKNOWN = 255
     };
 
@@ -62,12 +61,8 @@ public:
         // 0.10なら、主軸方向の端10%を幅推定に使う。
         float end_region_ratio = 0.10f;
 
-        // 旧設定値。互換性のため残しますが、現在の端判定には edge_reject_ratio を使います。
+        // 「上端5%」判定
         float top_edge_ratio = 0.05f;
-
-        // 候補点が上下左右の端からこの割合以内なら、その候補を棄却する。
-        // 0.03なら、元画像の上下左右端から3%以内を端扱いにする。
-        float edge_reject_ratio = 0.03f;
     };
 
     struct TipResult {
@@ -167,7 +162,7 @@ private:
         float mask_threshold;
         float end_region_ratio;
         float top_edge_ratio;
-        float edge_reject_ratio;
+        float reserved0;
 
         float original_width;
         float original_height;

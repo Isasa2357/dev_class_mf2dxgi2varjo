@@ -28,23 +28,6 @@ public:
     SharedNv12FrameBridge11To12(const SharedNv12FrameBridge11To12&) = delete;
     SharedNv12FrameBridge11To12& operator=(const SharedNv12FrameBridge11To12&) = delete;
 
-    class ScopedD3D11ReadAccess {
-    public:
-        explicit ScopedD3D11ReadAccess(SharedNv12FrameBridge11To12& bridge);
-        ~ScopedD3D11ReadAccess();
-
-        ScopedD3D11ReadAccess(const ScopedD3D11ReadAccess&) = delete;
-        ScopedD3D11ReadAccess& operator=(const ScopedD3D11ReadAccess&) = delete;
-
-        ScopedD3D11ReadAccess(ScopedD3D11ReadAccess&& other) noexcept;
-        ScopedD3D11ReadAccess& operator=(ScopedD3D11ReadAccess&&) = delete;
-
-    private:
-        SharedNv12FrameBridge11To12* bridge_ = nullptr;
-    };
-
-    ScopedD3D11ReadAccess acquire_for_d3d11_read_guard();
-
     void copy_from_d3d11_frame_and_wait(
         ID3D11Texture2D* src_texture,
         UINT src_subresource_index

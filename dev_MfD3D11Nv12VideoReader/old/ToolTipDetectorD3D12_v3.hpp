@@ -66,8 +66,8 @@ public:
         float top_edge_ratio = 0.05f;
 
         // 候補点が上下左右の端からこの割合以内なら、その候補を棄却する。
-        // 0.03なら、元画像の上下左右端から3%以内を端扱いにする。
-        float edge_reject_ratio = 0.03f;
+        // 0.03なら、160x160 mask では約4.8px以内を端扱いにする。
+        float edge_reject_ratio = 0.2f;
     };
 
     struct TipResult {
