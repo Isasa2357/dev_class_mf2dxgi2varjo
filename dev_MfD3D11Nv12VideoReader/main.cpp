@@ -14,6 +14,7 @@
 #include "D3D12Core.hpp"
 #include "MfD3D11Nv12VideoReader.hpp"
 #include "ToolTipPipelineD3D12.hpp"
+#include "OverlayVideoEncoderMF.hpp"
 
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "mfplat.lib")
@@ -163,7 +164,7 @@ int wmain(int argc, wchar_t** argv)
 
         ToolTipPipelineD3D12::Config pipeline_config{};
         pipeline_config.model_path =
-            (argc >= 3) ? argv[2] : L"model\\best_n_300.onnx";
+            (argc >= 3) ? argv[2] : L"model\\best_n_300_default.onnx";
 
         pipeline_config.input_width = 640;
         pipeline_config.input_height = 640;
@@ -206,6 +207,27 @@ int wmain(int argc, wchar_t** argv)
             d3d12,
             pipeline_config
         );
+
+        OverlayVideoEncoderMF::Config enc_config{};
+        enc_config.output_path = L"overlay_result.mp4";
+        enc_config.width = pipeline_config.input_width;
+        enc_config.height = pipeline_config.input_height;
+        enc_config.fps_num = 30;
+        enc_config.fps_den = 1;
+        enc_config.bitrate = 40'000'000;
+
+        enc_config.input_width = 640.0f;
+        enc_config.input_height = 640.0f;
+        enc_config.mask_width = 160.0f;
+        enc_config.mask_height = 160.0f;
+
+        enc_config.score_threshold = 0.25f;
+        enc_config.mask_threshold = 0.5f;
+        enc_config.mask_alpha = 0.45f;
+        enc_config.draw_candidates = true;
+        enc_config.draw_axis = true;
+
+        OverlayVideoEncoderMF encoder(enc_config);
 
         D3D11VideoFrame frame{};
 
